@@ -101,5 +101,7 @@ if __name__ == "__main__":
     df.to_csv(output_file, index=False)
 
     # Notify DVC about changes
+    last_timestamp = df['Close Time'].max()
+    commit_message = f"Data update for symbol: {symbol}, interval: {interval}, hours: {hours}, last timestamp: {last_timestamp}"
     subprocess.run(['dvc', 'add', output_file], check=True)
-    subprocess.run(['dvc', 'commit', output_file], check=True)
+    subprocess.run(['dvc', 'commit', '-m', commit_message, output_file], check=True)
