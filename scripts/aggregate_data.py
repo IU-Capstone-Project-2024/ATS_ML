@@ -1,6 +1,12 @@
+import sys
 import os
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, root_dir)
+
 import pandas as pd
-from get_binance_data import get_klines_futures, get_full_klines_spot
+from functools import reduce
+from src.data.scraping.get_historical_binance_data import get_full_klines_spot
+from find_dumps import find_dump_intervals
 
 # historical 1s:
 # spot trades
@@ -21,56 +27,66 @@ def get_all_file_names(directory):
     files = [f for f in all_files if os.path.isfile(os.path.join(directory, f))]
     return files
 
-def aggregate_for_timeframe(df, name_aggregation_column, amount_seconds):    
+def aggregate_for_timeframe(df, name_aggregation_column, period):
+    # sum the values from period
     assert 'unix' in df.columns, "DataFrame must contain 'unix' column"
     assert name_aggregation_column in df.columns, f"DataFrame must contain '{name_aggregation_column}' column"
 
-    period_ms = period * 1000
+    if period == '15s':
+        period_ms = 15 * 1000
+    elif period == '60s':
+        period_ms = 60 * 1000
+    else:
+        raise ValueError("Period must be '15s' or '60s'")
+
     df['time_bucket'] = (df['unix'] // period_ms) * period_ms
-    
     aggregated_df = df.groupby('time_bucket')[name_aggregation_column].sum().reset_index()
-    aggregated_df.rename(columns={'time_bucket': 'unix', name_aggregation_column: 'agg'+name_aggregation_column}, inplace=True)
+    aggregated_df.rename(columns={'time_bucket': 'unix', name_aggregation_column: 'agg_' + name_aggregation_column}, inplace=True)
     
-    return aggregated_df
+    if name_aggregation_column=="Open":
+        aggregated_df['agg_Open']/=(period_ms/1000)
+    
+    return aggregated_df[['unix', 'agg_' + name_aggregation_column]]
+
+def aggregate_trades(df_aggtrades):
+    assert ''
 
 def create_bin(df, bin_column_name, period):
     assert bin_column_name in df.columns, f"DataFrame must contain '{bin_column_name}' column"
     
-    # Convert the bin_column_name to numeric, coercing errors to NaN
-    df[bin_column_name] = pd.to_numeric(df[bin_column_name], errors='coerce')
+    if period == '15s':
+        period_ms = 15 * 1000
+    elif period == '60s':
+        period_ms = 60 * 1000
+    else:
+        raise ValueError("Period must be '15s' or '60s'")
     
-    # Drop rows with NaN values in bin_column_name
-    df = df.dropna(subset=[bin_column_name])
-    
-    # Ensure the column is of integer type
-    df[bin_column_name] = df[bin_column_name].astype(int)
-    
-    # Calculate the bin column
-    df['bin'] = (df[bin_column_name] // (period * 1000)) * (period * 1000)
-    
-    # Sort the DataFrame by the bin column
-    df = df.sort_values('bin')
+    df['unix'] = (df['unix'] // period_ms) * period_ms
     
     return df
 
+def merge_dfs(left, right):
+    return pd.merge(left, right, on='unix', how='outer')
+
 symbol='BTCUSDT'
 period='15s'
-directory="aggTrades"
-dumps_unix = [(1716471900000, 1716473100000),
-(1717426200000, 1717426500000),
-(1717782600000, 1717784100000),
-(1718070600000, 1718070900000),
-(1718220000000, 1718221800000),
-(1718380500000, 1718381400000)]
+dumps_unix = find_dump_intervals()
+# TODO: save intervals in file
 
+script_dir = os.path.dirname(__file__)
+directory=os.path.join(script_dir, '..', 'data', 'external', 'aggtrades')
 files=get_all_file_names(directory)
+
 for dump_unix in dumps_unix:
+    
     # for specified dump period, aggregate all data
     # aggTrades
+    # taken from binance website. If use api, too long to wait. Files contain aggtrades for specific day
     for file in files:
         file_path = os.path.join(directory, file)
         df_aggtrades=pd.read_csv(file_path)
         df_aggtrades.columns=['id', 'price','quantity','firstid','lastid','unix','takersell','pricechanged']
+        df_aggtrades=df_aggtrades[['price','quantity','unix','takersell','pricechanged']]
         
         start_day_unix=df_aggtrades['unix'].iat[0]
         end_day_unix=df_aggtrades['unix'].iat[-1]
@@ -83,11 +99,7 @@ for dump_unix in dumps_unix:
             break
     if df_aggtrades_dump.empty:
         continue
-
-    # create corresponding bin
-    # TODO: fix
-    # df_aggtrades_dump=create_bin(df_aggtrades_dump,'unix',period)
-    # print(df_aggtrades_dump.iloc[0])
+    df_aggtrades_dump=create_bin(df_aggtrades_dump,'unix',period)
     
     # spot delta change%, volume change%, price change% by second
     klines_spot=get_full_klines_spot(symbol,'1s',dump_unix[0],dump_unix[1])
@@ -101,14 +113,23 @@ for dump_unix in dumps_unix:
     df_klines['Taker sell base asset volume'] = df_klines['Volume']-df_klines['Taker buy base asset volume']
     df_klines['Taker volume delta']=df_klines['Taker buy base asset volume']-df_klines['Taker sell base asset volume']
     
-    df_open=aggregate_for_timeframe(df_klines,'Open',period)
+    # all available data
+    df_open=aggregate_for_timeframe(df_klines,'Open',period) #TODO: devide by amount
     df_volume=aggregate_for_timeframe(df_klines,'Volume',period)
     df_volume_delta=aggregate_for_timeframe(df_klines,'Taker volume delta',period)
+    df_aggtrades_dump
     
-    df_open_change=df_open['agg Open'].diff()
-    df_volume_change=df_volume['agg Volume'].diff()
-    df_volume_delta_change=df_volume_delta['agg Taker volume delta'].diff()
-
-# draw plots for time series - ty
-# automate - We
-# 1,2 - Ya
+    df_grouped_trades = df_aggtrades_dump.groupby('unix').apply(lambda x: x.drop(columns='unix').to_dict('records')).reset_index()
+    df_grouped_trades.columns=['unix','trades']
+    
+    # Concatenate dataframes
+    dfs=[df_open,df_volume,df_volume_delta,df_grouped_trades]
+    concatenated_df = reduce(merge_dfs, dfs)
+    
+    print(concatenated_df.head())
+    
+    # TODO: external/aggTrades dvc
+    # TODO: label data
+    # TODO: preprocessing
+    # TODO: visualisations
+    # TODO: automate everything

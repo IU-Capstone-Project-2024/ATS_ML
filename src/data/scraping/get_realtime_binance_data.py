@@ -1,6 +1,6 @@
 import asyncio
-from get_binance_data import listen_to_futures_stream
-from get_binance_data import listen_to_spot_stream
+from ATS_ML.src.data.scraping.get_historical_binance_data import listen_to_futures_stream
+from ATS_ML.src.data.scraping.get_historical_binance_data import listen_to_spot_stream
 
 # Data by second via websocket:
 # delta spot

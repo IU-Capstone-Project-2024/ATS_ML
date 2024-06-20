@@ -1,6 +1,10 @@
-from get_binance_data import get_klines_futures
-from get_binance_data import get_oi
-from get_binance_data import get_full_aggregated_spot_trades
+import sys
+import os
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, root_dir)
+
+from src.data.scraping.get_historical_binance_data import get_klines_futures
+from src.data.scraping.get_historical_binance_data import get_oi
 from datetime import datetime, timezone, timedelta
 
 def convert_unix_to_utc_plus_3(unix_timestamp):
@@ -69,9 +73,7 @@ def find_downfall_intervals_with_timestamps(values, cumulative_threshold, change
                 if ((float(values[max_value_index])-float(values[min_value_index]))/float(values[min_value_index])) > cumulative_threshold:
                     # cut edge decline/stagnate bars. Take precise growth period
                     change_intervals.append((cumulative_change, max_value_index, min_value_index))
-                    # ?
-                    # min_value_index = 0
-                    # max_value_index = len(values)-1 
+
                 # end propogation with this start_index
                 break
                
@@ -118,24 +120,28 @@ def find_dumps(symbol, period, price_index, change_threshold, cumulative_thresho
                     break
     return downfall_intervals
 
-timestamps=[1718398800000-150000000*i for i in range(17)] # Every period is 150000seconds=41.6hours=5min*500 (so no conflict with oi data receving)
-timestamps.sort()
-symbol='BTCUSDT'
-period='5m'
+def find_dump_intervals():
+    now = datetime.now()
+    time_delta = timedelta(minutes=now.minute % 5)
+    rounded_time = (now - time_delta).replace(second=0, microsecond=0)
+    rounded_unix_time = int(rounded_time.timestamp())*1000
 
-for i in range (1,len(timestamps)):
-    start_timestamp=timestamps[i-1]
-    end_timestamp=timestamps[i]
-    downfall_intervals=find_dumps(symbol,period,price_index=2,change_threshold=-0.002,cumulative_threshold=0.015,tolerance=3,start_time=start_timestamp,end_time=end_timestamp)
-    if len(downfall_intervals)>0:
-        for start_index, end_index in downfall_intervals:
-            start_unix=convert_index_to_unix(start_timestamp,'5m',start_index)
-            end_unix=convert_index_to_unix(start_timestamp,'5m',end_index)
-            print(start_unix,end_unix)
-            
-            # trades=get_full_aggregated_spot_trades(symbol,start_unix,end_unix)
-            # print(len(trades), convert_unix_to_utc_plus_3(trades[0]['T']), convert_unix_to_utc_plus_3(trades[-1]['T']))
-            # for trade in trades:
-                # 'm'=true = taker sell, 'm'=false = taker buy
-                # 'M'=true when enough liquidity, false when price moves
-                # print(trade['q'],trade['m'],trade['M']) 
+    timestamps=[rounded_unix_time-150000000*i for i in range(17)] # Every period is 150000seconds=41.6hours=5min*500 (so no conflict with oi data receving)
+    timestamps.sort()
+    symbol='BTCUSDT'
+    period='5m'
+
+    dumps_intervals=[]
+    for i in range (1,len(timestamps)):
+        start_timestamp=timestamps[i-1]
+        end_timestamp=timestamps[i]
+        downfall_intervals=find_dumps(symbol,period,price_index=2,change_threshold=-0.002,cumulative_threshold=0.015,tolerance=3,start_time=start_timestamp,end_time=end_timestamp)
+        if len(downfall_intervals)>0:
+            for start_index, end_index in downfall_intervals:
+                start_unix=convert_index_to_unix(start_timestamp,period,start_index)
+                end_unix=convert_index_to_unix(start_timestamp,period,end_index)
+                dumps_intervals.append((start_unix,end_unix))
+    return dumps_intervals
+
+if __name__ == "__main__":
+    find_dump_intervals()
