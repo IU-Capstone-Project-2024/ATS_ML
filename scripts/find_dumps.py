@@ -83,6 +83,7 @@ def find_downfall_intervals_with_timestamps(values, cumulative_threshold, change
     return change_intervals
 
 def find_dumps(symbol, period, price_index, change_threshold, cumulative_threshold, tolerance, start_time=None, end_time=None, limit=None):
+    # price index=2=lows. Work good for finding decresaing trend
     # get data from binance
     if limit:
         oi_data = get_oi(symbol, period, limit)
@@ -120,7 +121,7 @@ def find_dumps(symbol, period, price_index, change_threshold, cumulative_thresho
                     break
     return downfall_intervals
 
-def find_dump_intervals():
+def find_dump_intervals(symbol='BTCUSDT',period='5m',tolerance=4):
     now = datetime.now()
     time_delta = timedelta(minutes=now.minute % 5)
     rounded_time = (now - time_delta).replace(second=0, microsecond=0)
@@ -128,14 +129,12 @@ def find_dump_intervals():
 
     timestamps=[rounded_unix_time-150000000*i for i in range(17)] # Every period is 150000seconds=41.6hours=5min*500 (so no conflict with oi data receving)
     timestamps.sort()
-    symbol='BTCUSDT'
-    period='5m'
 
     dumps_intervals=[]
     for i in range (1,len(timestamps)):
         start_timestamp=timestamps[i-1]
         end_timestamp=timestamps[i]
-        downfall_intervals=find_dumps(symbol,period,price_index=2,change_threshold=-0.002,cumulative_threshold=0.015,tolerance=3,start_time=start_timestamp,end_time=end_timestamp)
+        downfall_intervals=find_dumps(symbol,period,price_index=2,change_threshold=-0.002,cumulative_threshold=0.015,tolerance=tolerance,start_time=start_timestamp,end_time=end_timestamp)
         if len(downfall_intervals)>0:
             for start_index, end_index in downfall_intervals:
                 start_unix=convert_index_to_unix(start_timestamp,period,start_index)
@@ -144,4 +143,4 @@ def find_dump_intervals():
     return dumps_intervals
 
 if __name__ == "__main__":
-    find_dump_intervals()
+    print(find_dump_intervals())
