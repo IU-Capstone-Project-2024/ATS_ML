@@ -2,7 +2,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-class CustomEnv(gym.Env):
+class TrainEnv(gym.Env):
     """Custom Environment that follows gym interface.
 
     Parameters:
@@ -35,13 +35,13 @@ class CustomEnv(gym.Env):
     metadata = {"render_modes": ["human"], "render_fps": 30}
 
     def __init__(self, data, window_size, transaction_cost_pct=0.001):
-        super(CustomEnv, self).__init__()
+        super(TrainEnv, self).__init__()
         
         # Initialize parameters
         self.data = data
         self.window_size = window_size
         self.transaction_cost_pct = transaction_cost_pct
-        self.current_step = 0
+        self.current_step = np.random.randint(self.window_size, len(self.data) - 1)
         self.balance = 10000  # Initial balance
         self.shares_held = 0
         self.total_shares_sold = 0
@@ -67,7 +67,7 @@ class CustomEnv(gym.Env):
         - info (dict): Additional information about the reset.
 
         """
-        self.current_step = np.random.randint(0, len(self.data) - self.window_size)
+        self.current_step = np.random.randint(self.window_size, len(self.data) - 1)
         self.balance = 10000
         self.shares_held = 0
         self.total_shares_sold = 0
@@ -109,7 +109,7 @@ class CustomEnv(gym.Env):
         - observation (numpy.ndarray): The next observation.
 
         """
-        frame = np.array(self.data.iloc[self.current_step:self.current_step + self.window_size])
+        frame = np.array(self.data.iloc[self.current_step - self.window_size + 1 : self.current_step + 1])
         past_action_frame = np.array([self.balance, self.shares_held, self.total_sales_value])
 
         return np.hstack((frame, past_action_frame.reshape(-1, 1)))
@@ -127,15 +127,12 @@ class CustomEnv(gym.Env):
             total_possible = self.balance // current_price
             self.shares_held += total_possible
             self.balance -= total_possible * current_price * (1 + self.transaction_cost_pct)
-            self.past_actions.append('Buy')
         elif action == 2:  # Sell
             self.balance += self.shares_held * current_price * (1 - self.transaction_cost_pct)
             self.total_shares_sold += self.shares_held
             self.total_sales_value += self.shares_held * current_price
             self.shares_held = 0
-            self.past_actions.append('Sell')
-        else:
-            self.past_actions.append('Hold')
+        self.past_actions.append(action)
 
     def _calculate_reward(self):
         """Calculates the reward for the current step in the environment.
