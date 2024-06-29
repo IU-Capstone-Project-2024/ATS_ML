@@ -12,24 +12,27 @@ class TrainEnv(gym.Env):
         self.data = data
         self.window_size = window_size
         self.transaction_cost_pct = transaction_cost_pct
-        self.current_step = np.random.randint(self.window_size, len(self.data) - 2) if not self.test_mode else 0
+        # traveler index of row in dataframe. first is random
+        self.current_step = np.random.randint(self.window_size, len(self.data) - 2) if not self.test_mode else 0 
         self.balance = 10000
         self.tokens_held = 0
         self.total_transactions = 0
-        self.training_period = training_period
+        self.training_period = training_period  # how many rows to see
         self.last_time_step = min(self.current_step + self.training_period, len(self.data) - 2) if not self.test_mode else len(self.data) - 2
-        self.action_rule_violation = False
-        self.min_observed_price = np.inf
-        self.min_observed_price_temp = np.inf
-        self.max_observed_price = -np.inf
+        self.action_rule_violation = False # model should take action, but dont have needed asset
+        # Used for calculating one potential best trade
+        self.min_observed_price = np.inf # price to buy
+        self.min_observed_price_temp = np.inf # while price decline, save potential buy price
+        self.max_observed_price = -np.inf # price to sell
         self.bought = False
 
         # Define action and observation space
         self.action_space = spaces.Discrete(3) # 0: Hold, 1: Buy, 2: Sell
 
+        # TODO: fix, if flatten applied
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, 
-            shape=(window_size*4 + 1,), 
+            shape=(window_size, len(data.iloc[0])), 
             dtype=np.float32
         )
 
@@ -45,7 +48,7 @@ class TrainEnv(gym.Env):
         self.past_actions = []
         self.action_rule_violation = False
         self.min_observed_price = np.inf
-        self.min_observed_price_temp = np.inf
+        self.min_observed_price_temp = np.inf 
         self.max_observed_price = -np.inf
         self.bought = False
 
@@ -57,6 +60,7 @@ class TrainEnv(gym.Env):
         self.current_step += 1
 
         if self.current_step >= self.last_time_step:
+            # traveled until end
             done = True
         else:
             done = False
@@ -64,24 +68,24 @@ class TrainEnv(gym.Env):
         return self._next_observation(), self._get_reward(), done, False, {}
     
     def _next_observation(self):
+        # get next timestamp data + window_size previous
         frame = self.data.iloc[self.current_step - self.window_size + 1:self.current_step + 1]
-        obs = np.ndarray(shape=(self.window_size, 4), dtype=np.float32)
-        obs[:, 0] = frame["Close"] / frame["Open"]
-        obs[:, 1] = frame["High"] / frame["Low"]
-        obs[:, 2] = frame["Volume"]
-        obs[:, 3] = frame["Number of Trades"]
-        obs = obs.flatten()
-        obs = np.append(obs, self.bought)
+        # creating empty numpy array
+        obs = np.ndarray(shape=(self.window_size, len(frame.iloc[0])), dtype=np.float32)
+        # filling with values
+        # TODO: apply flatten, if needed, append self.bought
+        obs = frame.to_numpy()
         return obs
 
-        
-    
     def _take_action(self, action):
-        current_price = self.data['Close'].iloc[self.current_step]
-        timestamp = self.data.index[self.current_step]
+        current_price = self.data['agg_Low'].iloc[self.current_step]
+        timestamp = self.data['unix']
+        
+        # update potential best trade
         # if current_price > self.max_observed_price:
         #     self.max_observed_price = current_price
         #     self.min_observed_price = self.min_observed_price_temp
+        # still searching for best entry
         # elif current_price < self.min_observed_price_temp:
         #     self.min_observed_price_temp = current_price
 
@@ -94,6 +98,7 @@ class TrainEnv(gym.Env):
                 self.total_transactions += 1
                 self.past_actions.append((timestamp, 'Buy', current_price, self.balance, self.tokens_held))
             else:
+                # already bought
                 self.action_rule_violation = True
             self.bought = True
         elif action == 2: # Sell
@@ -103,14 +108,15 @@ class TrainEnv(gym.Env):
                 self.total_transactions += 1
                 self.past_actions.append((timestamp, 'Sell', current_price, self.balance, self.tokens_held))
             else:
+                # nothing to sell
                 self.action_rule_violation = True
             self.bought = False
         else: # Hold
             self.past_actions.append((timestamp, 'Hold', current_price, self.balance, self.tokens_held))
 
     def _get_reward(self):
-        current_price = self.data['Close'].iloc[self.current_step]
-        next_price = self.data['Close'].iloc[self.current_step + 1]
+        current_price = self.data['agg_Low'].iloc[self.current_step]
+        next_price = self.data['agg_Low'].iloc[self.current_step + 1]
         current_net_worth = self.balance + self.tokens_held * current_price
         next_net_worth = self.balance + self.tokens_held * next_price
         reward = next_net_worth / current_net_worth

@@ -7,21 +7,20 @@ import os
 import matplotlib.pyplot as plt
 
 # Load the training data
-training_data_path = "../data/BTCUSDT_1m/raw/BTCUSDT_1m_data.csv"
+# TODO: cross validation
+training_data_path = "../data/raw/dumps_aggregated0.csv"
+test_data_path="../data/raw/dumps_aggregated1.csv"
 file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), training_data_path)
-data = pd.read_csv(file_path)
-
-train_data = data[:int(0.8 * len(data))]
-print(train_data.shape)
-test_data = data[int(0.8 * len(data)):]
-print(test_data.shape)
+train_data = pd.read_csv(file_path)
+file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), test_data_path)
+test_data = pd.read_csv(file_path)
 
 # Create the environment
-window_size = 50
-training_period = 300
+window_size = 20 # take last 5min=20*15s
+training_period = 20
 train_env = TrainEnv(data=train_data, window_size=window_size, training_period=training_period)
 
-# Create the vectorized environment
+# Create one vectorized environment
 vec_env = DummyVecEnv([lambda: train_env])
 
 # Create the model
