@@ -37,12 +37,12 @@ model.learn(total_timesteps=100000, progress_bar=True)
 
 # Evaluate the model
 test_env = TrainEnv(data=test_data, window_size=window_size, test_mode=True)
-obs = test_env.reset()
+obs, _ = test_env.reset()
 done = False
 reward = 0
 while not done:
     action, _states = model.predict(obs)
-    obs, rewards, done, info = test_env.step(action)
+    obs, rewards, done, info, _ = test_env.step(action)
     reward += rewards
 
 print(f"Total reward: {reward}")
@@ -56,7 +56,8 @@ net_worth_scaled = net_worth_history / net_worth_history.iloc[0]
 
 plt.figure(figsize=(30, 15))
 plt.plot(test_history["timestamp"], price_scaled, label="Price")
-plt.plot(test_history["timestamp"], net_worth_scaled, label="Net worth")
+plt.plot(test_history["timestamp"], net_worth_scaled, label="Net Worth")
 plt.legend()
 plt.show()
+
 
