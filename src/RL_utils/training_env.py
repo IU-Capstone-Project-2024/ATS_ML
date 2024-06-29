@@ -4,30 +4,32 @@ from gymnasium import spaces
 
 class TrainEnv(gym.Env):
     
-    def __init__(self, data, window_size, training_period, transaction_cost_pct=0.001, balance=10000, tokens_held=0):
+    def __init__(self, data, window_size, training_period=1000, transaction_cost_pct=0.001, test_mode=False, balance=10000, tokens_held=0):
         super(TrainEnv, self).__init__()
         
         # Initialize parameters
+        self.test_mode = test_mode
         self.data = data
         self.window_size = window_size
         self.transaction_cost_pct = transaction_cost_pct
-        self.current_step = np.random.randint(self.window_size, len(self.data) - 1)
+        self.current_step = np.random.randint(self.window_size, len(self.data) - 2) if not self.test_mode else 0
         self.balance = 10000
         self.tokens_held = 0
         self.total_transactions = 0
         self.training_period = training_period
-        self.last_time_step = min(self.current_step + self.training_period, len(self.data) - 1)
+        self.last_time_step = min(self.current_step + self.training_period, len(self.data) - 2) if not self.test_mode else len(self.data) - 2
         self.action_rule_violation = False
         self.min_observed_price = np.inf
         self.min_observed_price_temp = np.inf
         self.max_observed_price = -np.inf
+        self.bought = False
 
         # Define action and observation space
         self.action_space = spaces.Discrete(3) # 0: Hold, 1: Buy, 2: Sell
 
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, 
-            shape=(window_size, 4), 
+            shape=(window_size*4 + 1,), 
             dtype=np.float32
         )
 
@@ -35,20 +37,22 @@ class TrainEnv(gym.Env):
         self.past_actions = [] # (timestamp, action, price, balance, tokens_held)
 
     def reset(self, seed=None):
-        self.current_step = np.random.randint(self.window_size, len(self.data) - 1)
+        self.current_step = np.random.randint(self.window_size, len(self.data) - 2) if not self.test_mode else 0
         self.balance = 10000
         self.tokens_held = 0
         self.total_transactions = 0
-        self.last_time_step = min(self.current_step + self.training_period, len(self.data) - 1)
+        self.last_time_step = min(self.current_step + self.training_period, len(self.data) - 2) if not self.test_mode else len(self.data) - 2
         self.past_actions = []
         self.action_rule_violation = False
         self.min_observed_price = np.inf
         self.min_observed_price_temp = np.inf
         self.max_observed_price = -np.inf
+        self.bought = False
 
         return self._next_observation(), {}
     
     def step(self, action):
+        self.action_rule_violation = False
         self._take_action(action)
         self.current_step += 1
 
@@ -66,6 +70,8 @@ class TrainEnv(gym.Env):
         obs[:, 1] = frame["High"] / frame["Low"]
         obs[:, 2] = frame["Volume"]
         obs[:, 3] = frame["Number of Trades"]
+        obs = obs.flatten()
+        obs = np.append(obs, self.bought)
         return obs
 
         
@@ -73,11 +79,11 @@ class TrainEnv(gym.Env):
     def _take_action(self, action):
         current_price = self.data['Close'].iloc[self.current_step]
         timestamp = self.data.index[self.current_step]
-        if current_price > self.max_observed_price:
-            self.max_observed_price = current_price
-            self.min_observed_price = self.min_observed_price_temp
-        elif current_price < self.min_observed_price_temp:
-            self.min_observed_price_temp = current_price
+        # if current_price > self.max_observed_price:
+        #     self.max_observed_price = current_price
+        #     self.min_observed_price = self.min_observed_price_temp
+        # elif current_price < self.min_observed_price_temp:
+        #     self.min_observed_price_temp = current_price
 
         
         if action == 1: # Buy
@@ -89,6 +95,7 @@ class TrainEnv(gym.Env):
                 self.past_actions.append((timestamp, 'Buy', current_price, self.balance, self.tokens_held))
             else:
                 self.action_rule_violation = True
+            self.bought = True
         elif action == 2: # Sell
             if self.tokens_held > 0:
                 self.balance = self.tokens_held * current_price * (1 - self.transaction_cost_pct)
@@ -97,16 +104,17 @@ class TrainEnv(gym.Env):
                 self.past_actions.append((timestamp, 'Sell', current_price, self.balance, self.tokens_held))
             else:
                 self.action_rule_violation = True
+            self.bought = False
         else: # Hold
             self.past_actions.append((timestamp, 'Hold', current_price, self.balance, self.tokens_held))
 
     def _get_reward(self):
         current_price = self.data['Close'].iloc[self.current_step]
-        net_worth = self.balance + self.tokens_held * current_price
-        if not self.min_observed_price == np.inf:
-            reward = (net_worth - 10000) / (self.max_observed_price - self.min_observed_price)
-        else:
-            reward = net_worth - 10000
+        next_price = self.data['Close'].iloc[self.current_step + 1]
+        current_net_worth = self.balance + self.tokens_held * current_price
+        next_net_worth = self.balance + self.tokens_held * next_price
+        reward = next_net_worth / current_net_worth
+        reward -= self.action_rule_violation
         return reward
     
     def render(self):
