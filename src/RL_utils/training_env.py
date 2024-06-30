@@ -146,27 +146,30 @@ class SparseTrainEnv(gym.Env):
     Parameters:
     - data (pandas.DataFrame): The input data used for training the agent.
     - window_size (int): The size of the sliding window used for observation.
-    - training_period (int, optional): The number of time steps used for training. Default is 1000.
+    - episod_length (int, optional): The number of time steps used for training. Default is 1000.
     - transaction_cost_pct (float, optional): The transaction cost as a percentage of the transaction value. Default is 0.001.
     - test_mode (bool, optional): Flag indicating whether the environment is in test mode. Default is False.
     """
 
-    def __init__(self, data, window_size, training_period=1000, transaction_cost_pct=0.001, test_mode=False):
+    def __init__(self, data, window_size, episode_length=1000, transaction_cost_pct=0.001, test_mode=False):
         super(SparseTrainEnv, self).__init__()
-        
+        # Training parameters
         self.test_mode = test_mode
         self.data = data
         self.window_size = window_size
-        self.transaction_cost_pct = transaction_cost_pct
-        self.balance = 10000
-        self.tokens_held = 0
-        self.training_period = training_period
+        self.episode_length = episode_length
         self.current_step = np.random.randint(self.window_size, len(self.data) - 2) if not self.test_mode else self.window_size
-        self.last_time_step = min(self.current_step + self.training_period, len(self.data) - 2) if not self.test_mode else len(self.data) - 2
-        self.total_transactions = 0
-        self.past_actions = []
+        self.last_time_step = min(self.current_step + self.episode_length, len(self.data) - 2) if not self.test_mode else len(self.data) - 2
+        # Environment parameters
+        self.transaction_cost_pct = transaction_cost_pct
+        self.balance = 10000 # Initial balance
+        self.entering_balance = 10000 # Initial balance
+        self.tokens_held = 0 # Number of tokens held
+        self.total_transactions = 0 # Total number of transactions
+        self.past_actions = [] # List of past actions taken
         self.cumulative_reward = 0 # Total reward over the episode
-        self.action_rule_violation = False
+        self.action_rule_violation = False # Flag indicating whether an action rule was violated (e.g., buying without sufficient balance)
+        
 
         self.action_space = spaces.Discrete(3)
         self.observation_space = spaces.Box(
@@ -185,9 +188,10 @@ class SparseTrainEnv(gym.Env):
         """
         self.current_step = np.random.randint(self.window_size, len(self.data) - 2) if not self.test_mode else self.window_size
         self.balance = 10000
+        self.entering_balance = 10000
         self.tokens_held = 0
         self.total_transactions = 0
-        self.last_time_step = min(self.current_step + self.training_period, len(self.data) - 2) if not self.test_mode else len(self.data) - 2
+        self.last_time_step = min(self.current_step + self.episode_length, len(self.data) - 2) if not self.test_mode else len(self.data) - 2
         self.past_actions = []
         self.cumulative_reward = 0
         self.action_rule_violation = False
@@ -243,6 +247,7 @@ class SparseTrainEnv(gym.Env):
                 
         if action == 1:  # Buy
             if self.balance > 0:
+                self.entering_balance = self.balance
                 tokens_bought = self.balance / current_price * (1 - self.transaction_cost_pct)
                 self.tokens_held = tokens_bought
                 self.balance = 0
@@ -274,6 +279,8 @@ class SparseTrainEnv(gym.Env):
         if done:
             final_net_worth = self.balance + self.tokens_held * self.data['Close'].iloc[self.current_step]
             reward = (final_net_worth / 10000 - 1) * 100  # Total net worth as a percentage gain
+        elif self.past_actions and self.past_actions[-1][1] == 'Sell':
+            reward = (self.balance / self.entering_balance - 1) * 100  # Profit as a percentage gain
         else:
             reward = 0  # Intermediate steps do not contribute to the reward directly
         reward -= self.action_rule_violation
