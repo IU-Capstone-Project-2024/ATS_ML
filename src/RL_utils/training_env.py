@@ -78,8 +78,8 @@ class TrainEnv(gym.Env):
         return obs
 
     def _take_action(self, action):
-        current_price = self.data['agg_Low'].iloc[self.current_step]
-        timestamp = self.data['unix']
+        current_price = self.data['Close'].iloc[self.current_step]
+        timestamp = self.data['unix'].iloc[self.current_step]
         
         # update potential best trade
         # if current_price > self.max_observed_price:
@@ -115,8 +115,8 @@ class TrainEnv(gym.Env):
             self.past_actions.append((timestamp, 'Hold', current_price, self.balance, self.tokens_held))
 
     def _get_reward(self):
-        current_price = self.data['agg_Low'].iloc[self.current_step]
-        next_price = self.data['agg_Low'].iloc[self.current_step + 1]
+        current_price = self.data['Close'].iloc[self.current_step]
+        next_price = self.data['Close'].iloc[self.current_step + 1]
         current_net_worth = self.balance + self.tokens_held * current_price
         next_net_worth = self.balance + self.tokens_held * next_price
         reward = next_net_worth / current_net_worth
@@ -127,5 +127,3 @@ class TrainEnv(gym.Env):
         print(f'Step: {self.current_step}, Balance: {self.balance}, Tokens held: {self.tokens_held}, Total transactions: {self.total_transactions}, Min price: {self.min_observed_price}, Max price: {self.max_observed_price}, Action rule violation: {self.action_rule_violation}')
         print(f'Past actions: {self.past_actions}')
         print('')
-
-
