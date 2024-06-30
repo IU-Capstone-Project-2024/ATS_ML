@@ -32,7 +32,7 @@ class TrainEnv(gym.Env):
         # TODO: fix, if flatten applied
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, 
-            shape=(window_size, len(data.iloc[0])), 
+            shape=(window_size, len(data.iloc[0]) - 2), 
             dtype=np.float32
         )
 
@@ -70,11 +70,8 @@ class TrainEnv(gym.Env):
     def _next_observation(self):
         # get next timestamp data + window_size previous
         frame = self.data.iloc[self.current_step - self.window_size + 1:self.current_step + 1]
-        # creating empty numpy array
-        obs = np.ndarray(shape=(self.window_size, len(frame.iloc[0])), dtype=np.float32)
-        # filling with values
-        # TODO: apply flatten, if needed, append self.bought
-        obs = frame.to_numpy()
+        # converting to numpy array and drop price and timestamp
+        obs = frame.values[:, 2:]
         return obs
 
     def _take_action(self, action):
