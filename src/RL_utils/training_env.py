@@ -70,7 +70,7 @@ class TrainEnv(gym.Env):
     def _next_observation(self):
         # get next timestamp data + window_size previous
         frame = self.data.iloc[self.current_step - self.window_size + 1:self.current_step + 1]
-        # converting to numpy array and drop price and timestamp
+        # converting to numpy array and drop price and timestamps
         obs = frame.values[:, 2:]
         return obs
 
@@ -116,7 +116,7 @@ class TrainEnv(gym.Env):
         next_price = self.data['Close'].iloc[self.current_step + 1]
         current_net_worth = self.balance + self.tokens_held * current_price
         next_net_worth = self.balance + self.tokens_held * next_price
-        reward = next_net_worth / current_net_worth
+        reward = next_net_worth / current_net_worth - 1
         reward -= self.action_rule_violation
         return reward
     
