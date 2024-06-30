@@ -27,7 +27,7 @@ vec_env = DummyVecEnv([lambda: train_env])
 model = PPO("MlpPolicy", vec_env, verbose=1, ent_coef=0.001)
 
 # Train the model
-model.learn(total_timesteps=100000, progress_bar=True)
+# model.learn(total_timesteps=100000, progress_bar=True)
 
 # Save the model
 # model.save("../models/RL_trading_model")
@@ -57,6 +57,10 @@ net_worth_scaled = net_worth_history / net_worth_history.iloc[0]
 plt.figure(figsize=(30, 15))
 plt.plot(test_history["timestamp"], price_scaled, label="Price")
 plt.plot(test_history["timestamp"], net_worth_scaled, label="Net Worth")
+buy_timestamps = test_history[test_history["action"] == "Buy"]["timestamp"]
+sell_timestamps = test_history[test_history["action"] == "Sell"]["timestamp"]
+plt.vlines(buy_timestamps, ymin=0, ymax=1, colors='g', linestyles='dashed', label='Buy')
+plt.vlines(sell_timestamps, ymin=0, ymax=1, colors='r', linestyles='dashed', label='Sell')
 plt.legend()
 plt.show()
 
