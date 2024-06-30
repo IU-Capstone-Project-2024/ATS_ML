@@ -13,7 +13,7 @@ class TrainEnv(gym.Env):
         self.window_size = window_size
         self.transaction_cost_pct = transaction_cost_pct
         # traveler index of row in dataframe. first is random
-        self.current_step = np.random.randint(self.window_size, len(self.data) - 2) if not self.test_mode else 0 
+        self.current_step = np.random.randint(self.window_size, len(self.data) - 2) if not self.test_mode else window_size
         self.balance = 10000
         self.tokens_held = 0
         self.total_transactions = 0
@@ -40,7 +40,7 @@ class TrainEnv(gym.Env):
         self.past_actions = [] # (timestamp, action, price, balance, tokens_held)
 
     def reset(self, seed=None):
-        self.current_step = np.random.randint(self.window_size, len(self.data) - 2) if not self.test_mode else 0
+        self.current_step = np.random.randint(self.window_size, len(self.data) - 2) if not self.test_mode else self.window_size
         self.balance = 10000
         self.tokens_held = 0
         self.total_transactions = 0
@@ -79,7 +79,7 @@ class TrainEnv(gym.Env):
 
     def _take_action(self, action):
         current_price = self.data['agg_Low'].iloc[self.current_step]
-        timestamp = self.data['unix']
+        timestamp = self.data['unix'].iloc[self.current_step]
         
         # update potential best trade
         # if current_price > self.max_observed_price:
