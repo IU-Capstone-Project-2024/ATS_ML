@@ -24,7 +24,7 @@ class TrainEnv(gym.Env):
         self.min_observed_price = np.inf # price to buy
         self.min_observed_price_temp = np.inf # while price decline, save potential buy price
         self.max_observed_price = -np.inf # price to sell
-        self.bought = False
+        self.bought = np.inf # to calculate reward selling price / buying price
 
         # Define action and observation space
         self.action_space = spaces.Discrete(3) # 0: Hold, 1: Buy, 2: Sell
@@ -50,7 +50,7 @@ class TrainEnv(gym.Env):
         self.min_observed_price = np.inf
         self.min_observed_price_temp = np.inf 
         self.max_observed_price = -np.inf
-        self.bought = False
+        self.bought = np.inf
 
         return self._next_observation(), {}
     
@@ -97,7 +97,7 @@ class TrainEnv(gym.Env):
             else:
                 # already bought
                 self.action_rule_violation = True
-            self.bought = True
+            self.bought = self.data['Close'].iloc[self.current_step]
         elif action == 2: # Sell
             if self.tokens_held > 0:
                 self.balance = self.tokens_held * current_price * (1 - self.transaction_cost_pct)
@@ -107,20 +107,182 @@ class TrainEnv(gym.Env):
             else:
                 # nothing to sell
                 self.action_rule_violation = True
-            self.bought = False
         else: # Hold
             self.past_actions.append((timestamp, 'Hold', current_price, self.balance, self.tokens_held))
 
     def _get_reward(self):
         current_price = self.data['Close'].iloc[self.current_step]
         next_price = self.data['Close'].iloc[self.current_step + 1]
-        current_net_worth = self.balance + self.tokens_held * current_price
-        next_net_worth = self.balance + self.tokens_held * next_price
-        reward = next_net_worth / current_net_worth - 1
+        reward = 0
+        if self.balance > 0:
+            # if we sold all tokens, we lost potential profit
+            lost_profit = next_price / current_price - 1
+            reward -= lost_profit
+        elif self.tokens_held > 0:
+            # if we hold tokens, we gain potential profit or loss
+            observed_profit = next_price / current_price - 1
+            reward += observed_profit
+
+
         reward -= self.action_rule_violation
+        if self.past_actions and self.past_actions[-1][1] == 'Buy':
+            reward += current_price / self.bought - 1
         return reward
     
     def render(self):
         print(f'Step: {self.current_step}, Balance: {self.balance}, Tokens held: {self.tokens_held}, Total transactions: {self.total_transactions}, Min price: {self.min_observed_price}, Max price: {self.max_observed_price}, Action rule violation: {self.action_rule_violation}')
+        print(f'Past actions: {self.past_actions}')
+        print('')
+
+
+
+class SparseTrainEnv(gym.Env):
+    """
+    Custom gym environment for training a sparse reinforcement learning agent.
+
+    Sparse reinforcement learning (RL) refers to a type of RL problem where the agent receives a sparse reward signal, meaning that the reward is only provided at certain specific time steps or states. 
+    In contrast, in dense RL, the agent receives a reward signal at every time step or state.
+
+    Parameters:
+    - data (pandas.DataFrame): The input data used for training the agent.
+    - window_size (int): The size of the sliding window used for observation.
+    - training_period (int, optional): The number of time steps used for training. Default is 1000.
+    - transaction_cost_pct (float, optional): The transaction cost as a percentage of the transaction value. Default is 0.001.
+    - test_mode (bool, optional): Flag indicating whether the environment is in test mode. Default is False.
+    """
+
+    def __init__(self, data, window_size, training_period=1000, transaction_cost_pct=0.001, test_mode=False):
+        super(SparseTrainEnv, self).__init__()
+        
+        self.test_mode = test_mode
+        self.data = data
+        self.window_size = window_size
+        self.transaction_cost_pct = transaction_cost_pct
+        self.balance = 10000
+        self.tokens_held = 0
+        self.training_period = training_period
+        self.current_step = np.random.randint(self.window_size, len(self.data) - 2) if not self.test_mode else self.window_size
+        self.last_time_step = min(self.current_step + self.training_period, len(self.data) - 2) if not self.test_mode else len(self.data) - 2
+        self.total_transactions = 0
+        self.past_actions = []
+        self.cumulative_reward = 0 # Total reward over the episode
+        self.action_rule_violation = False
+
+        self.action_space = spaces.Discrete(3)
+        self.observation_space = spaces.Box(
+            low=-np.inf, high=np.inf, 
+            shape=(window_size * (len(data.iloc[0]) - 2) + 2,), # Previous observations + current profit + holding flag
+            dtype=np.float32
+        )
+
+    def reset(self, seed=None):
+        """
+        Reset the environment to its initial state.
+
+        Returns:
+        - observation (numpy.ndarray): The initial observation of the environment.
+        - info (dict): Additional information about the reset.
+        """
+        self.current_step = np.random.randint(self.window_size, len(self.data) - 2) if not self.test_mode else self.window_size
+        self.balance = 10000
+        self.tokens_held = 0
+        self.total_transactions = 0
+        self.last_time_step = min(self.current_step + self.training_period, len(self.data) - 2) if not self.test_mode else len(self.data) - 2
+        self.past_actions = []
+        self.cumulative_reward = 0
+        self.action_rule_violation = False
+
+        return self._next_observation(), {}
+    
+    def step(self, action):
+        """
+        Take a step in the environment based on the given action.
+
+        Parameters:
+        - action (int): The action to take in the environment.
+
+        Returns:
+        - observation (numpy.ndarray): The new observation of the environment.
+        - reward (float): The reward received from the previous action.
+        - done (bool): Flag indicating whether the episode is done.
+        - info (dict): Additional information about the step.
+        """
+        self.action_rule_violation = False
+        self._take_action(action)
+        self.current_step += 1
+        done = self.current_step >= self.last_time_step
+
+        reward = self._get_reward(done)
+        self.cumulative_reward += reward
+
+        return self._next_observation(), reward, done, False, {}
+    
+    def _next_observation(self):
+        """
+        Get the next observation of the environment.
+
+        Returns:
+        - observation (numpy.ndarray): The next observation of the environment.
+        """
+        frame = self.data.iloc[self.current_step - self.window_size + 1:self.current_step + 1]
+        obs = frame.values[:, 2:].flatten()
+        current_profit = self.balance + self.tokens_held * self.data['Close'].iloc[self.current_step]
+        current_profit = (current_profit / 10000 - 1)
+        obs = np.append(obs, [current_profit, self.tokens_held > 0]) # Previous observations + current profit + holding flag
+        return obs
+
+    def _take_action(self, action):
+        """
+        Take the specified action in the environment.
+
+        Parameters:
+        - action (int): The action to take in the environment.
+        """
+        current_price = self.data['Close'].iloc[self.current_step]
+        timestamp = self.data['unix'].iloc[self.current_step]
+                
+        if action == 1:  # Buy
+            if self.balance > 0:
+                tokens_bought = self.balance / current_price * (1 - self.transaction_cost_pct)
+                self.tokens_held = tokens_bought
+                self.balance = 0
+                self.total_transactions += 1
+                self.past_actions.append((timestamp, 'Buy', current_price, self.balance, self.tokens_held))
+            else:
+                self.action_rule_violation = True
+        elif action == 2:  # Sell
+            if self.tokens_held > 0:
+                self.balance = self.tokens_held * current_price * (1 - self.transaction_cost_pct)
+                self.tokens_held = 0
+                self.total_transactions += 1
+                self.past_actions.append((timestamp, 'Sell', current_price, self.balance, self.tokens_held))
+            else:
+                self.action_rule_violation = True
+        else:  # Hold
+            self.past_actions.append((timestamp, 'Hold', current_price, self.balance, self.tokens_held))
+
+    def _get_reward(self, done):
+        """
+        Calculate the reward based on the current state of the environment.
+
+        Parameters:
+        - done (bool): Flag indicating whether the episode is done.
+
+        Returns:
+        - reward (float): The reward for the current state.
+        """
+        if done:
+            final_net_worth = self.balance + self.tokens_held * self.data['Close'].iloc[self.current_step]
+            reward = (final_net_worth / 10000 - 1) * 100  # Total net worth as a percentage gain
+        else:
+            reward = 0  # Intermediate steps do not contribute to the reward directly
+        reward -= self.action_rule_violation
+        return reward
+    
+    def render(self):
+        """
+        Render the current state of the environment.
+        """
+        print(f'Step: {self.current_step}, Balance: {self.balance}, Tokens held: {self.tokens_held}, Total transactions: {self.total_transactions}, Action rule violation: {self.action_rule_violation}')
         print(f'Past actions: {self.past_actions}')
         print('')
