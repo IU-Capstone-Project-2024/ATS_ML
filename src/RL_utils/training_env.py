@@ -1,6 +1,9 @@
 import gymnasium as gym
 import numpy as np
+import pandas as pd
 from gymnasium import spaces
+from typing import List
+from RL_utils.data_handling import EpisodeManager
 
 class TrainEnv(gym.Env):
     
@@ -144,22 +147,32 @@ class SparseTrainEnv(gym.Env):
     In contrast, in dense RL, the agent receives a reward signal at every time step or state.
 
     Parameters:
-    - data (pandas.DataFrame): The input data used for training the agent.
+    - data (List[pandas.DataFrame]): List of input dataframes used for training the agent.
     - window_size (int): The size of the sliding window used for observation.
     - episod_length (int, optional): The number of time steps used for training. Default is 1000.
     - transaction_cost_pct (float, optional): The transaction cost as a percentage of the transaction value. Default is 0.001.
     - test_mode (bool, optional): Flag indicating whether the environment is in test mode. Default is False.
     """
 
-    def __init__(self, data, window_size, episode_length=1000, transaction_cost_pct=0.001, test_mode=False):
+    def __init__(
+            self, 
+            data: List[pd.DataFrame], 
+            window_size, 
+            episode_length=1000, 
+            fitness_ma_coef = 0.1, 
+            episod_step=20, 
+            episod_temp=1,
+            transaction_cost_pct=0.001, 
+            test_mode=False
+            ):
         super(SparseTrainEnv, self).__init__()
         # Training parameters
         self.test_mode = test_mode
         self.data = data
+        self.episode_manager = EpisodeManager(dataframes=data, left_indent=window_size, right_indent=2, episod_step=episod_step, alpha=fitness_ma_coef)
         self.window_size = window_size
         self.episode_length = episode_length
-        self.current_step = np.random.randint(self.window_size, len(self.data) - 2) if not self.test_mode else self.window_size
-        self.last_time_step = min(self.current_step + self.episode_length, len(self.data) - 2) if not self.test_mode else len(self.data) - 2
+        self.episod_temp = episod_temp
         # Environment parameters
         self.transaction_cost_pct = transaction_cost_pct
         self.balance = 10000 # Initial balance
@@ -169,12 +182,23 @@ class SparseTrainEnv(gym.Env):
         self.past_actions = [] # List of past actions taken
         self.cumulative_reward = 0 # Total reward over the episode
         self.action_rule_violation = False # Flag indicating whether an action rule was violated (e.g., buying without sufficient balance)
-        
 
+        # Initialize the current dataframe and step
+        if not self.test_mode:
+            self.df_id, self.episode_start = self.episode_manager.select_episode(temperature=self.episod_temp)
+            self.current_step = self.episode_start
+            self.last_time_step = min(self.current_step + self.episode_length, len(self.data[self.df_id]) - 2)
+        else:
+            self.df_id = self.episode_manager.select_dataframe(temperature=self.episod_temp)
+            self.episode_start = window_size
+            self.current_step = self.episode_start
+            self.last_time_step = len(self.data[self.df_id]) - 2
+        
+        # Define action and observation space
         self.action_space = spaces.Discrete(3)
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, 
-            shape=(window_size * (len(data.iloc[0]) - 2) + 2,), # Previous observations + current profit + holding flag
+            shape=(window_size * (len(data[self.df_id].iloc[0]) - 2) + 2,), # Previous observations + current profit + holding flag
             dtype=np.float32
         )
 
@@ -186,15 +210,15 @@ class SparseTrainEnv(gym.Env):
         - observation (numpy.ndarray): The initial observation of the environment.
         - info (dict): Additional information about the reset.
         """
-        self.current_step = np.random.randint(self.window_size, len(self.data) - 2) if not self.test_mode else self.window_size
-        self.balance = 10000
-        self.entering_balance = 10000
-        self.tokens_held = 0
-        self.total_transactions = 0
-        self.last_time_step = min(self.current_step + self.episode_length, len(self.data) - 2) if not self.test_mode else len(self.data) - 2
-        self.past_actions = []
-        self.cumulative_reward = 0
-        self.action_rule_violation = False
+        if not self.test_mode:
+            self.df_id, self.episode_start = self.episode_manager.select_episode(temperature=self.episod_temp)
+            self.current_step = self.episode_start
+            self.last_time_step = min(self.current_step + self.episode_length, len(self.data[self.df_id]) - 2)
+        else:
+            self.df_id = self.episode_manager.select_dataframe(temperature=self.episod_temp)
+            self.episode_start = self.window_size
+            self.current_step = self.episode_start
+            self.last_time_step = len(self.data[self.df_id]) - 2
 
         return self._next_observation(), {}
     
@@ -217,6 +241,9 @@ class SparseTrainEnv(gym.Env):
         done = self.current_step >= self.last_time_step
 
         reward = self._get_reward(done)
+        # Update the episode statistics if the episode is done
+        if done:
+            self.episode_manager.update_stats(self.df_id, self.episode_start, reward)
         self.cumulative_reward += reward
 
         return self._next_observation(), reward, done, False, {}
@@ -228,9 +255,9 @@ class SparseTrainEnv(gym.Env):
         Returns:
         - observation (numpy.ndarray): The next observation of the environment.
         """
-        frame = self.data.iloc[self.current_step - self.window_size + 1:self.current_step + 1]
+        frame = self.data[self.df_id].iloc[self.current_step - self.window_size + 1:self.current_step + 1]
         obs = frame.values[:, 2:].flatten()
-        current_profit = self.balance + self.tokens_held * self.data['Close'].iloc[self.current_step]
+        current_profit = self.balance + self.tokens_held * self.data[self.df_id]['Close'].iloc[self.current_step]
         current_profit = (current_profit / 10000 - 1)
         obs = np.append(obs, [current_profit, self.tokens_held > 0]) # Previous observations + current profit + holding flag
         return obs
@@ -242,8 +269,8 @@ class SparseTrainEnv(gym.Env):
         Parameters:
         - action (int): The action to take in the environment.
         """
-        current_price = self.data['Close'].iloc[self.current_step]
-        timestamp = self.data['unix'].iloc[self.current_step]
+        current_price = self.data[self.df_id]['Close'].iloc[self.current_step]
+        timestamp = self.data[self.df_id]['unix'].iloc[self.current_step]
                 
         if action == 1:  # Buy
             if self.balance > 0:
@@ -255,6 +282,7 @@ class SparseTrainEnv(gym.Env):
                 self.past_actions.append((timestamp, 'Buy', current_price, self.balance, self.tokens_held))
             else:
                 self.action_rule_violation = True
+                self.past_actions.append((timestamp, 'Hold', current_price, self.balance, self.tokens_held))
         elif action == 2:  # Sell
             if self.tokens_held > 0:
                 self.balance = self.tokens_held * current_price * (1 - self.transaction_cost_pct)
@@ -263,6 +291,7 @@ class SparseTrainEnv(gym.Env):
                 self.past_actions.append((timestamp, 'Sell', current_price, self.balance, self.tokens_held))
             else:
                 self.action_rule_violation = True
+                self.past_actions.append((timestamp, 'Hold', current_price, self.balance, self.tokens_held))
         else:  # Hold
             self.past_actions.append((timestamp, 'Hold', current_price, self.balance, self.tokens_held))
 
@@ -277,7 +306,7 @@ class SparseTrainEnv(gym.Env):
         - reward (float): The reward for the current state.
         """
         if done:
-            final_net_worth = self.balance + self.tokens_held * self.data['Close'].iloc[self.current_step]
+            final_net_worth = self.balance + self.tokens_held * self.data[self.df_id]['Close'].iloc[self.current_step]
             reward = (final_net_worth / 10000 - 1) * 100  # Total net worth as a percentage gain
         elif self.past_actions and self.past_actions[-1][1] == 'Sell':
             reward = (self.balance / self.entering_balance - 1) * 100  # Profit as a percentage gain
@@ -286,10 +315,9 @@ class SparseTrainEnv(gym.Env):
         reward -= self.action_rule_violation
         return reward
     
-    def render(self):
-        """
-        Render the current state of the environment.
-        """
-        print(f'Step: {self.current_step}, Balance: {self.balance}, Tokens held: {self.tokens_held}, Total transactions: {self.total_transactions}, Action rule violation: {self.action_rule_violation}')
-        print(f'Past actions: {self.past_actions}')
-        print('')
+    def print_step(self):
+        df_stats = self.episode_manager.stats
+        # For each dataframe print the average fitness score
+        print("========================================")
+        print("\t\t".join([str(df_id) for df_id in df_stats.keys()]))
+        print("\t\t".join([f"{df_stats[df_id]['total_fitness'] / len(df_stats[df_id]['episodes_stats']):.2f}" for df_id in df_stats.keys()]))

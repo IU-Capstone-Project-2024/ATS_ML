@@ -39,13 +39,13 @@ class EpisodeManager:
         
         self.stats = {
             df_id: {
-                "total_fitness": 0,
+                "total_fitness": 1e-6,
                 "episodes_stats": {
                     episode_start: {
                         "max_score": -np.inf,
                         "min_score": np.inf,
-                        "EWMA_score": 0,
-                        "fitness": 0,
+                        "EWMA_score": 1e-6,
+                        "fitness": 1e-6
                     } for episode_start in range(self.left_indent, len(dataframes[df_id]) - self.right_indent, self.episod_step)
                 }
             } for df_id in range(len(dataframes))
@@ -72,7 +72,9 @@ class EpisodeManager:
         
         # Update the fitness score
         if episode_stats["max_score"] != episode_stats["min_score"]:  # Avoid division by zero
-            episode_stats["fitness"] = (episode_stats["EWMA_score"] - episode_stats["min_score"]) / (episode_stats["max_score"] - episode_stats["min_score"])
+            episode_stats["fitness"] = (episode_stats["EWMA_score"] - episode_stats["min_score"]) / (episode_stats["max_score"] - episode_stats["min_score"] + 1e-6)
+        else:
+            episode_stats["fitness"] = 1.0
 
         # Update the total fitness for the dataframe
         df_stats["total_fitness"] += episode_stats["fitness"] - prev_fitness
@@ -88,7 +90,11 @@ class EpisodeManager:
             int: The ID of the selected dataframe.
         """
         # Compute the probabilities for each dataframe
-        probabilities = np.array([np.exp(df_stats["total_fitness"] / len(df_stats["episodes_stats"]) / temperature) for df_stats in self.stats.values()])
+        average_fitness = np.array([df_stats["total_fitness"] / len(df_stats["episodes_stats"]) for df_stats in self.stats.values()])
+        min_fitness = np.min(average_fitness)
+        max_fitness = np.max(average_fitness)
+        scaled_fitness = (average_fitness - min_fitness) / (max_fitness - min_fitness + 1e-6) # Scale the fitness scores to avoid numerical issues
+        probabilities = np.exp(scaled_fitness / temperature)
         probabilities /= np.sum(probabilities)
 
         # Select a dataframe
@@ -109,7 +115,11 @@ class EpisodeManager:
         df_stats = self.stats[df_id]
 
         # Compute the probabilities for each episode
-        probabilities = np.array([np.exp(episode_stats["fitness"] / temperature) for episode_stats in df_stats["episodes_stats"].values()])
+        fitness_scores = np.array([episode_stats["fitness"] for episode_stats in df_stats["episodes_stats"].values()])
+        min_fitness = np.min(fitness_scores)
+        max_fitness = np.max(fitness_scores)
+        scaled_fitness = (fitness_scores - min_fitness) / (max_fitness - min_fitness + 1e-6) # Scale the fitness scores to avoid numerical issues
+        probabilities = np.exp(scaled_fitness / temperature)
         probabilities /= np.sum(probabilities)
 
         # Select an episode
