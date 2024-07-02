@@ -1,4 +1,6 @@
 import numpy as np
+import pandas as pd
+from typing import List, Tuple
 
 class EpisodeManager:
     """
@@ -29,7 +31,7 @@ class EpisodeManager:
             Selects an episode based on the fitness scores within a dataframe.
     """
 
-    def __init__(self, dataframes, left_indent=20, right_indent=2, episod_step=1, alpha=0.1):
+    def __init__(self, dataframes: List[pd.DataFrame], left_indent=20, right_indent=2, episod_step=1, alpha=0.1):
         self.left_indent = left_indent
         self.right_indent = right_indent
         self.episod_step = episod_step
@@ -49,7 +51,7 @@ class EpisodeManager:
             } for df_id in range(len(dataframes))
         }
 
-    def update_stats(self, df_id, episode_start, episode_score):
+    def update_stats(self, df_id:int, episode_start:int, episode_score:float):
         """
         Updates the statistics for a given dataframe and episode.
 
@@ -75,7 +77,7 @@ class EpisodeManager:
         # Update the total fitness for the dataframe
         df_stats["total_fitness"] += episode_stats["fitness"] - prev_fitness
 
-    def select_dataframe(self, temperature=1):
+    def select_dataframe(self, temperature=1.0):
         """
         Selects a dataframe based on the total fitness scores.
 
@@ -92,7 +94,7 @@ class EpisodeManager:
         # Select a dataframe
         return np.random.choice(list(self.stats.keys()), p=probabilities)
     
-    def select_episode(self, temperature=1):
+    def select_episode(self, temperature=1.0):
         """
         Selects an episode based on the fitness scores within a dataframe.
 
