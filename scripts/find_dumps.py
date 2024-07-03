@@ -1,8 +1,3 @@
-import sys
-import os
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.insert(0, root_dir)
-
 from src.data.scraping.get_historical_binance_data import get_klines_futures
 from src.data.scraping.get_historical_binance_data import get_oi
 from datetime import datetime, timezone, timedelta
@@ -122,6 +117,7 @@ def find_dumps(symbol, period, price_index, change_threshold, cumulative_thresho
     return downfall_intervals
 
 def find_dump_intervals(symbol='BTCUSDT',period='5m',tolerance=4):
+    # finds dumps intervals from current moment till month ago, returns list of tuples (start_unix,end_unix)
     now = datetime.now()
     time_delta = timedelta(minutes=now.minute % 5)
     rounded_time = (now - time_delta).replace(second=0, microsecond=0)
@@ -139,6 +135,11 @@ def find_dump_intervals(symbol='BTCUSDT',period='5m',tolerance=4):
             for start_index, end_index in downfall_intervals:
                 start_unix=convert_index_to_unix(start_timestamp,period,start_index)
                 end_unix=convert_index_to_unix(start_timestamp,period,end_index)
+                
+                #include last period
+                if period=='5m':
+                    end_unix+=300_000
+                    
                 dumps_intervals.append((start_unix,end_unix))
     return dumps_intervals
 
