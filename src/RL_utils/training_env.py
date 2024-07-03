@@ -159,7 +159,7 @@ class SparseTrainEnv(gym.Env):
             data: List[pd.DataFrame], 
             window_size, 
             episode_length=1000, 
-            fitness_ma_coef = 0.1, 
+            observation_window=10,
             episod_step=20, 
             episod_temp=1,
             transaction_cost_pct=0.001, 
@@ -169,7 +169,7 @@ class SparseTrainEnv(gym.Env):
         # Training parameters
         self.test_mode = test_mode
         self.data = data
-        self.episode_manager = EpisodeManager(dataframes=data, left_indent=window_size, right_indent=2, episod_step=episod_step, alpha=fitness_ma_coef)
+        self.episode_manager = EpisodeManager(dataframes=data, left_indent=window_size, right_indent=2, episod_step=episod_step, observation_window=observation_window)
         self.window_size = window_size
         self.episode_length = episode_length
         self.episod_temp = episod_temp
