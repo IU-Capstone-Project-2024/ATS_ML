@@ -20,7 +20,7 @@ training_data_paths2 = [f"../data/raw/dumps_aggregated{train_id}.csv" for train_
 train_data2 = [pd.read_csv(os.path.join(script_path, path)) for path in training_data_paths2]
 
 # Load the test data
-test_data_path = "../data/raw/dumps_aggregated3.csv"
+test_data_path = "../data/raw/dumps_aggregated27.csv"
 test_data = pd.read_csv(os.path.join(script_path, test_data_path))
 
 # Create the environment
@@ -40,6 +40,7 @@ if os.path.exists(os.path.join(script_path, f"../models/PPO_{window_size}_{episo
 else:
     model = PPO("MlpPolicy", vec_env, verbose=1, n_steps=4096)
 
+# Set the tensorboard log directory
 models_log_dir = os.path.join(script_path, "../logs/models")
 model.tensorboard_log = models_log_dir
 
@@ -57,7 +58,7 @@ with open(os.path.join(environments_log_dir, "train_env1_stats.json"), "w") as f
 with open(os.path.join(environments_log_dir, "train_env2_stats.json"), "w") as f:
     json.dump(train_env2.episode_manager.stats, f)
 
-# # Load the model
+# Load the model
 model = PPO.load(model_path)
 
 # Evaluate the model
