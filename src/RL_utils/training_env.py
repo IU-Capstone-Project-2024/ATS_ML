@@ -173,15 +173,6 @@ class SparseTrainEnv(gym.Env):
         self.window_size = window_size
         self.episode_length = episode_length
         self.episod_temp = episod_temp
-        # Environment parameters
-        self.transaction_cost_pct = transaction_cost_pct
-        self.balance = 10000 # Initial balance
-        self.entering_balance = 10000 # Initial balance
-        self.tokens_held = 0 # Number of tokens held
-        self.total_transactions = 0 # Total number of transactions
-        self.past_actions = [] # List of past actions taken
-        self.cumulative_reward = 0 # Total reward over the episode
-        self.action_rule_violation = False # Flag indicating whether an action rule was violated (e.g., buying without sufficient balance)
 
         # Initialize the current dataframe and step
         if not self.test_mode:
@@ -193,6 +184,18 @@ class SparseTrainEnv(gym.Env):
             self.episode_start = window_size
             self.current_step = self.episode_start
             self.last_time_step = len(self.data[self.df_id]) - 2
+
+        # Environment parameters
+        self.transaction_cost_pct = transaction_cost_pct
+        self.balance = 10000 # Initial balance
+        self.entering_balance = 10000 # Initial balance
+        self.tokens_held = 0 # Number of tokens held
+        self.total_transactions = 0 # Total number of transactions
+        self.past_actions = [] # List of past actions taken
+        self.cumulative_reward = 0 # Total reward over the episode
+        self.action_rule_violation = False # Flag indicating whether an action rule was violated (e.g., buying without sufficient balance)
+        self.min_observed_price = np.inf # Minimum observed price for buying
+        self.max_price_gap = 0 # Maximum historical price gap in percentage
         
         # Define action and observation space
         self.action_space = spaces.Discrete(3)
@@ -219,6 +222,16 @@ class SparseTrainEnv(gym.Env):
             self.episode_start = self.window_size
             self.current_step = self.episode_start
             self.last_time_step = len(self.data[self.df_id]) - 2
+        
+        self.balance = 10000
+        self.entering_balance = 10000
+        self.tokens_held = 0
+        self.total_transactions = 0
+        self.past_actions = []
+        self.cumulative_reward = 0
+        self.action_rule_violation = False
+        self.min_observed_price = np.inf
+        self.max_price_gap = 0
 
         return self._next_observation(), {}
     
@@ -256,10 +269,17 @@ class SparseTrainEnv(gym.Env):
         - observation (numpy.ndarray): The next observation of the environment.
         """
         frame = self.data[self.df_id].iloc[self.current_step - self.window_size + 1:self.current_step + 1]
+        current_price = self.data[self.df_id]['Close'].iloc[self.current_step]
         obs = frame.values[:, 2:].flatten()
-        current_profit = self.balance + self.tokens_held * self.data[self.df_id]['Close'].iloc[self.current_step]
+        current_profit = self.balance + self.tokens_held * current_price
         current_profit = (current_profit / 10000 - 1)
         obs = np.append(obs, [current_profit, self.tokens_held > 0]) # Previous observations + current profit + holding flag
+
+        if current_price < self.min_observed_price:
+            self.min_observed_price = current_price
+        elif current_price / self.min_observed_price - 1 > self.max_price_gap:
+            self.max_price_gap = current_price / self.min_observed_price - 1
+
         return obs
 
     def _take_action(self, action):
@@ -308,6 +328,8 @@ class SparseTrainEnv(gym.Env):
         if done:
             final_net_worth = self.balance + self.tokens_held * self.data[self.df_id]['Close'].iloc[self.current_step]
             reward = (final_net_worth / 10000 - 1) * 100  # Total net worth as a percentage gain
+            reward -= self.max_price_gap * 100 # Use the maximum price gap as a baseline for the reward
+
         elif self.past_actions and self.past_actions[-1][1] == 'Sell':
             reward = (self.balance / self.entering_balance - 1) * 100  # Profit as a percentage gain
         else:
