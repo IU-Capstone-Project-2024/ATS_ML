@@ -349,38 +349,66 @@ def print_step(self):
         
 
 class KnifeEnv(gym.Env):
-    def __init__(self, data, window_size, test_mode=False):
+    def __init__(self, 
+            data: List[pd.DataFrame], 
+            window_size, 
+            episode_length=1000, 
+            observation_window=10,
+            episode_step=20, 
+            episode_temp=1,
+            transaction_cost_pct=0.001, 
+            test_mode=False
+            ):
         super(KnifeEnv, self).__init__()
         # training parameters
-        self.data=data
-        self.window_size=window_size # how many previous rows to show to agent
-        self.test_mode=test_mode
-        self.episode_length=2*self.window_size if not test_mode else len(self.data)-self.window_size # how many next rows to show to agent, full on testing
-        self.current_step = np.random.randint(self.episode_length, len(self.data) - 2) if not test_mode else 0
-        self.last_step = self.current_step+self.episode_length if not test_mode else len(self.data)-2
+        self.test_mode = test_mode
+        self.data = data # list of df
+        self.episode_manager = EpisodeManager(dataframes=data, left_indent=window_size, right_indent=2, episod_step=episode_step, observation_window=observation_window)
+        self.window_size = window_size # how many previous rows to show to agent
+        self.episode_length = episode_length
+        self.episode_temp = episode_temp
+        
+        # Initialize the current dataframe and step
+        if not self.test_mode:
+            self.df_id, self.episode_start = self.episode_manager.select_episode(temperature=self.episode_temp)
+            self.current_step = self.episode_start
+            self.last_step = min(self.current_step + self.episode_length, len(self.data[self.df_id]) - 2)
+        else:
+            self.df_id = self.episode_manager.select_dataframe(temperature=self.episode_temp)
+            self.episode_start = self.window_size
+            self.current_step = self.episode_start
+            self.last_step = len(self.data[self.df_id]) - 2
         
         # environment parameters 
         self.trades=[]
         self.rewards=[]
         self.action_space = spaces.Discrete(3)
         self.previous_action=0 # do nothing by default
-        self.low=np.array ([-1000,-1000,-1000,10]*self.window_size + [-1.3,0])
+        
+        self.low=np.array ([-1000,-1000,-1000,10]*self.window_size + [-1,0])
         self.high=np.array([1000,  1000, 1000, 20000]*self.window_size+[1,2])
         
         # Previous observations * window_size (unix and Close dropped) + current profit + previous_action. Dimension: (4*20+2)x1
         self.observation_space = spaces.Box(
             low=self.low, high=self.high, 
-            shape=(self.window_size * (len(self.data.iloc[0]) - 2) + 2,), 
+            shape=(window_size * (len(data[self.df_id].iloc[0]) - 2) + 2,), 
             dtype=np.float32
         )
     
     def reset(self, seed=None):
         # after episode end, reset environment
+        if not self.test_mode:
+            self.df_id, self.episode_start = self.episode_manager.select_episode(temperature=self.episode_temp)
+            self.current_step = self.episode_start
+            self.last_step = min(self.current_step + self.episode_length, len(self.data[self.df_id]) - 2)
+        else:
+            self.df_id = self.episode_manager.select_dataframe(temperature=self.episode_temp)
+            self.episode_start = self.window_size
+            self.current_step = self.episode_start
+            self.last_step = len(self.data[self.df_id]) - 2
+        
         self.trades=[]
         self.previous_action=0
-        self.episode_length=2*self.window_size if not self.test_mode else len(self.data)-self.window_size
-        self.current_step = np.random.randint(self.episode_length, len(self.data) - 2) if not self.test_mode else 0
-        self.last_step = self.current_step+self.episode_length if not self.test_mode else len(self.data)-2
         return self._next_observation(), {}
     
     def step(self, action):
@@ -393,6 +421,7 @@ class KnifeEnv(gym.Env):
         reward = self._get_reward(action, done)
         self.previous_action=action
         if done:
+            self.episode_manager.update_stats(self.df_id, self.episode_start, reward)
             info= {'trades' : self.trades, 'rewards':self.rewards}
         else:
             info = {}
@@ -400,9 +429,9 @@ class KnifeEnv(gym.Env):
     
     def _next_observation(self):
         # new data
-        frame = self.data.iloc[self.current_step - self.window_size + 1:self.current_step + 1]
+        frame = self.data[self.df_id].iloc[self.current_step - self.window_size + 1:self.current_step + 1]
         obs = frame.values[:, [1,3,4,5]].flatten()
-        current_price=frame.iloc[len(frame)-1,2]
+        current_price = self.data[self.df_id]['Close'].iloc[self.current_step]
         
         # unrealized profit calc to pass along other observations
         # if dont have opened trade
@@ -413,7 +442,7 @@ class KnifeEnv(gym.Env):
             current_profitloss = calc_profit(self.trades[-1].entry_price,current_price)
             self.trades[-1].profit=current_profitloss
         
-        # Previous observations + unrealized profit + previous action
+        # Previous observations + unrealized profit if have opened trade + previous action
         obs = np.append(obs, [current_profitloss, self.previous_action]) 
         
         # check if values of obs are within bounds
@@ -425,8 +454,8 @@ class KnifeEnv(gym.Env):
     
     def _take_action(self, action, symbol='BTCUSDT', period='15s',strategy='knife'):
         # update last trade info
-        current_price=self.data.iloc[self.current_step]['Close']
-        current_timestamp=self.data.iloc[self.current_step]['unix']
+        current_price=self.data[self.df_id]['Close'].iloc[self.current_step]
+        current_timestamp=self.data[self.df_id]['unix'].iloc[self.current_step]
         
         if action==1: # buy 
             # if first order or previous order was sold
@@ -441,7 +470,7 @@ class KnifeEnv(gym.Env):
             pass
     
     def _get_reward(self, action, done):
-        current_price=self.data.iloc[self.current_step]['Close']
+        current_price=self.data[self.df_id]['Close'].iloc[self.current_step]
         # if have opened trade, or trade which is closed in current price
         current_trade=self.trades[-1] if len(self.trades)>0 and (self.trades[-1].exit_price==None or self.trades[-1].exit_price==current_price) else None
         
@@ -485,5 +514,5 @@ class KnifeEnv(gym.Env):
     
     def render(self):
         # Print current info
-        print(self._get_reward())
-        
+        # print(self._get_reward())
+        pass

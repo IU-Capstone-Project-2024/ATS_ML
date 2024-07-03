@@ -3,3 +3,4 @@ requests
 hydra-core
 dvc
 seaborn
+tensorboard
