@@ -1,6 +1,9 @@
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
+from .Order import TestOrder
+from .reward_functions import testOrder_reward
+from .reward_functions import calc_profit
 
 class TrainEnv(gym.Env):
     
@@ -293,3 +296,141 @@ class SparseTrainEnv(gym.Env):
         print(f'Step: {self.current_step}, Balance: {self.balance}, Tokens held: {self.tokens_held}, Total transactions: {self.total_transactions}, Action rule violation: {self.action_rule_violation}')
         print(f'Past actions: {self.past_actions}')
         print('')
+
+class KnifeEnv(gym.Env):
+    def __init__(self, data, window_size):
+        super(KnifeEnv, self).__init__()
+        # training parameters
+        self.data=data
+        self.window_size=window_size # how many previous rows to show to agent
+        self.episode_length=2*self.window_size # how many next rows to show to agent
+        self.current_step = np.random.randint(self.episode_length, len(self.data) - 2)
+        self.last_step = self.current_step+self.episode_length
+        
+        # environment parameters 
+        self.trades=[]
+        self.rewards=[]
+        self.action_space = spaces.Discrete(3)
+        self.previous_action=0 # do nothing by default
+        self.low=np.array ([-1000,-1000,-1000,10]*self.window_size + [-1.3,0])
+        self.high=np.array([1000,  1000, 1000, 20000]*self.window_size+[1,2])
+        
+        # Previous observations * window_size (unix and Close dropped) + current profit + previous_action. Dimension: (4*20+2)x1
+        self.observation_space = spaces.Box(
+            low=self.low, high=self.high, 
+            shape=(self.window_size * (len(self.data.iloc[0]) - 2) + 2,), 
+            dtype=np.float32
+        )
+    
+    def reset(self, seed=None):
+        # after episode end, reset environment
+        self.trades=[]
+        self.previous_action=0
+        self.current_step = np.random.randint(self.window_size, len(self.data) - 2)
+        self.last_step = min(self.current_step + self.episode_length, len(self.data) - 2)
+        return self._next_observation(), {}
+    
+    def step(self, action):
+        # Evaluate, if action is possible. Then get reward for episode
+        self._take_action(action)
+        self.current_step += 1
+        # flag for reseting environment
+        done = self.current_step >= self.last_step
+        # Analyze action
+        reward = self._get_reward(action, done)
+        self.previous_action=action
+        if done:
+            info= {'trades' : self.trades, 'rewards':self.rewards}
+        else:
+            info = {}
+        return self._next_observation(), reward, done, False, info
+    
+    def _next_observation(self):
+        # new data
+        frame = self.data.iloc[self.current_step - self.window_size + 1:self.current_step + 1]
+        obs = frame.values[:, [1,3,4,5]].flatten()
+        current_price=frame.iloc[len(frame)-1,2]
+        
+        # unrealized profit calc to pass along other observations
+        # if dont have opened trade
+        if len(self.trades)==0 or (len(self.trades)!=0 and self.trades[-1].exit_price!=None):
+            current_profitloss=0
+        # if have opened trade
+        elif self.trades[-1].exit_price==None:
+            current_profitloss = calc_profit(self.trades[-1].entry_price,current_price)
+            self.trades[-1].profit=current_profitloss
+        
+        # Previous observations + unrealized profit + previous action
+        obs = np.append(obs, [current_profitloss, self.previous_action]) 
+        
+        # check if values of obs are within bounds
+        if not self.observation_space.contains(obs):
+            out_of_bounds = (obs < self.observation_space.low) | (obs > self.observation_space.high)
+            if np.any(out_of_bounds):
+                print(obs[out_of_bounds])
+        return obs
+    
+    def _take_action(self, action, symbol='BTCUSDT', period='15s',strategy='knife'):
+        # update last trade info
+        current_price=self.data.iloc[self.current_step]['Close']
+        current_timestamp=self.data.iloc[self.current_step]['unix']
+        
+        if action==1: # buy 
+            # if first order or previous order was sold
+            if len(self.trades)==0 or (len(self.trades)>0 and self.trades[-1].exit_price!=None):
+                self.trades.append(TestOrder(symbol, current_price, current_timestamp, period, strategy))
+        elif action==2: # sell
+            # if previous order only bought
+            if len(self.trades)>0 and self.trades[-1].exit_price==None:
+                self.trades[-1].exit_price=current_price
+                self.trades[-1].exit_timestamp=current_timestamp        
+        else: # do nothing
+            pass
+    
+    def _get_reward(self, action, done):
+        current_price=self.data.iloc[self.current_step]['Close']
+        # if have opened trade, or trade which is closed in current price
+        current_trade=self.trades[-1] if len(self.trades)>0 and (self.trades[-1].exit_price==None or self.trades[-1].exit_price==current_price) else None
+        
+        # if episode didnt end and have opened trade
+        if not done and current_trade!=None:
+            
+            # if action is do nothing and trade is opened, return unrealized profit
+            if action==0 and current_trade.exit_price==None:
+                reward=5*calc_profit(current_trade.entry_price, current_price)
+                
+            # if action is to buy, when trade is opened, return penalty
+            elif action==1 and current_trade.exit_price==None:
+                reward=-0.3
+                
+            # if action is to sell, when trade is closed in current step, return reward
+            elif action==2 and current_trade.exit_price==current_price:
+                reward=testOrder_reward(current_trade)
+                
+        # if episode didnt end and not have opened trade
+        elif not done and current_trade==None:
+            reward=0
+        
+        # Penalties for same action=(1,2) in row
+        elif self.previous_action==action and action!=0:
+            reward= -0.3
+        elif self.previous_action==action and action==0:
+            reward= 0
+        # Penalty for sell, if not have opened trade
+        elif current_trade==None and action==2:
+            reward=-0.3
+            
+        # If episode end, return reward for all trades
+        elif done:
+            reward=sum(testOrder_reward(testOrder) for testOrder in self.trades)
+            # penalize for no trades
+            if reward==0:
+                reward=-1
+        
+        self.rewards.append(reward)
+        return reward
+    
+    def render(self):
+        # Print current info
+        print(self._get_reward())
+        

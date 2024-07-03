@@ -1,4 +1,5 @@
-from RL_utils.training_env import TrainEnv
+from RL_utils.training_env import KnifeEnv
+from RL_utils.reward_functions import calc_profit
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 import numpy as np
@@ -7,61 +8,82 @@ import os
 import matplotlib.pyplot as plt
 
 # Load the training data
-# TODO: cross validation
-training_data_path = "../data/raw/dumps_aggregated0.csv"
-test_data_path="../data/raw/dumps_aggregated1.csv"
-file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), training_data_path)
-train_data = pd.read_csv(file_path)
-file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), test_data_path)
-test_data = pd.read_csv(file_path)
+training_files = [
+    "../data/raw/dumps_aggregated0.csv",
+    "../data/raw/dumps_aggregated1.csv",
+    "../data/raw/dumps_aggregated2.csv",
+    "../data/raw/dumps_aggregated3.csv",
+]
+test_data_path = "../data/raw/dumps_aggregated4.csv"
+training_dfs = [pd.read_csv(os.path.join(os.path.dirname(os.path.abspath(__file__)), file)) for file in training_files]
+df_test = pd.read_csv(os.path.join(os.path.dirname(os.path.abspath(__file__)), test_data_path))
+print(len(training_dfs),len(df_test))
 
 # Create the environment
 window_size = 20 # take last 5min=20*15s
 training_period = 20
-train_env = TrainEnv(data=train_data, window_size=window_size, training_period=training_period)
+environments = [DummyVecEnv([lambda df=df: KnifeEnv(data=df, window_size=window_size)]) for df in training_dfs]
 
-# Create one vectorized environment
-vec_env = DummyVecEnv([lambda: train_env])
-
-# Create the model
-model = PPO("MlpPolicy", vec_env, verbose=1, ent_coef=0.001)
-
-# Train the model
-model.learn(total_timesteps=100000, progress_bar=True)
-
-# Save the model
-# model.save("../models/RL_trading_model")
-
-# # Load the model
-# model = PPO.load("../models/RL_trading_model")
-
-# Evaluate the model
-test_env = TrainEnv(data=test_data, window_size=window_size, test_mode=True)
+# learn
+model = PPO("MlpPolicy", environments[0])
+for env in environments:
+    model.set_env(env)
+    model.learn(total_timesteps=50_000, progress_bar=True)
+# model.save("../models/knifebot_all_data")
+# model = PPO.load("../models/knifebot_all_data")
+# Evaluate the model, set initial parameters
+test_env = KnifeEnv(data=df_test, window_size=window_size)
 obs, _ = test_env.reset()
 done = False
-reward = 0
+
+# iteratively step through whole data
 while not done:
+    # predict next action
     action, _states = model.predict(obs)
-    obs, rewards, done, info, _ = test_env.step(action)
-    reward += rewards
+    # act according to action, obtain results
+    obs, reward, done, _, info = test_env.step(action)
 
-print(f"Total reward: {reward}")
-print(f"Mean reward: {reward /( len(test_data) - 2 - window_size)}")
+all_trades=info['trades']
+all_rewards=info['rewards']
 
-test_history = pd.DataFrame(test_env.past_actions, columns=["timestamp", "action", "price", "balance", "tokens_held"])
-net_worth_history = test_history["balance"] + test_history["tokens_held"] * test_history["price"]
+# Visualisations
+print('Amount of trades:', len(all_trades))
+total_profit = 0
+for trade in all_trades:
+    total_profit += trade.profit
+    print(trade.entry_price, trade.exit_price, trade.profit)
+print('Total profit:', total_profit)
 
-price_scaled = test_history["price"] / test_history["price"].iloc[0]
-net_worth_scaled = net_worth_history / net_worth_history.iloc[0]
-
-plt.figure(figsize=(30, 15))
-plt.plot(test_history["timestamp"], price_scaled, label="Price")
-plt.plot(test_history["timestamp"], net_worth_scaled, label="Net Worth")
-buy_timestamps = test_history[test_history["action"] == "Buy"]["timestamp"]
-sell_timestamps = test_history[test_history["action"] == "Sell"]["timestamp"]
-plt.vlines(buy_timestamps, ymin=min(price_scaled.min(), net_worth_scaled.min()), ymax=max(price_scaled.max(), net_worth_scaled.max()), colors='g', linestyles='dashed', label='Buy')
-plt.vlines(sell_timestamps, ymin=min(price_scaled.min(), net_worth_scaled.min()), ymax=max(price_scaled.max(), net_worth_scaled.max()), colors='r', linestyles='dashed', label='Sell')
+# Plot rewards
+plt.figure(figsize=(14, 7))
+plt.plot(all_rewards, marker='o', linestyle='-', color='b', label='Rewards')
+plt.xlabel('Episode')
+plt.ylabel('Reward')
+plt.title('Rewards per Episode')
 plt.legend()
+plt.grid(True)
 plt.show()
 
+# Plot price chart with entry and exit timestamps
+plt.figure(figsize=(14, 7))
+prices = pd.DataFrame()
+prices['unix'] = df_test['unix']
+prices['Close'] = df_test['Close']
 
+plt.plot(prices['unix'], prices['Close'], label='Price')
+for trade in all_trades:
+    plt.axvline(x=trade.entry_timestamp, color='g', linestyle='--', label='Entry')
+    if trade.exit_timestamp==None:
+        plt.axvline(x=df_test['unix'].iloc[-1], color='r', linestyle='--', label='Forced Exit')
+    else:
+        plt.axvline(x=trade.exit_timestamp, color='r', linestyle='--', label='Exit')
+
+plt.xlabel('Unix Timestamp')
+plt.ylabel('Price')
+plt.title('Price Chart with Entry and Exit Timestamps')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# TODO:
+# debug
