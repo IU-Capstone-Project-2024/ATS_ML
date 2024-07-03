@@ -32,7 +32,7 @@ for env in environments:
 # model.save("../models/knifebot_all_data")
 # model = PPO.load("../models/knifebot_all_data")
 # Evaluate the model, set initial parameters
-test_env = KnifeEnv(data=df_test, window_size=window_size)
+test_env = KnifeEnv(data=df_test, window_size=window_size, test_mode=True)
 obs, _ = test_env.reset()
 done = False
 
@@ -86,4 +86,5 @@ plt.grid(True)
 plt.show()
 
 # TODO:
+# fix error with current step
 # debug

@@ -298,14 +298,15 @@ class SparseTrainEnv(gym.Env):
         print('')
 
 class KnifeEnv(gym.Env):
-    def __init__(self, data, window_size):
+    def __init__(self, data, window_size, test_mode=False):
         super(KnifeEnv, self).__init__()
         # training parameters
         self.data=data
         self.window_size=window_size # how many previous rows to show to agent
-        self.episode_length=2*self.window_size # how many next rows to show to agent
-        self.current_step = np.random.randint(self.episode_length, len(self.data) - 2)
-        self.last_step = self.current_step+self.episode_length
+        self.test_mode=test_mode
+        self.episode_length=2*self.window_size if not test_mode else len(self.data)-self.window_size # how many next rows to show to agent, full on testing
+        self.current_step = np.random.randint(self.episode_length, len(self.data) - 2) if not test_mode else 0
+        self.last_step = self.current_step+self.episode_length if not test_mode else len(self.data)-2
         
         # environment parameters 
         self.trades=[]
@@ -326,8 +327,9 @@ class KnifeEnv(gym.Env):
         # after episode end, reset environment
         self.trades=[]
         self.previous_action=0
-        self.current_step = np.random.randint(self.window_size, len(self.data) - 2)
-        self.last_step = min(self.current_step + self.episode_length, len(self.data) - 2)
+        self.episode_length=2*self.window_size if not self.test_mode else len(self.data)-self.window_size
+        self.current_step = np.random.randint(self.episode_length, len(self.data) - 2) if not self.test_mode else 0
+        self.last_step = self.current_step+self.episode_length if not self.test_mode else len(self.data)-2
         return self._next_observation(), {}
     
     def step(self, action):
