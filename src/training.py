@@ -1,47 +1,72 @@
-from RL_utils.training_env import TrainEnv
+from RL_utils.training_env import TrainEnv, SparseTrainEnv
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 import numpy as np
 import pandas as pd
 import os
 import matplotlib.pyplot as plt
+import time
+import json
+
+n_episodes_to_train = 1000
+
+script_path = os.path.dirname(os.path.abspath(__file__))
 
 # Load the training data
-# TODO: cross validation
-training_data_path = "../data/raw/dumps_aggregated0.csv"
-test_data_path="../data/raw/dumps_aggregated1.csv"
-file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), training_data_path)
-train_data = pd.read_csv(file_path)
-file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), test_data_path)
-test_data = pd.read_csv(file_path)
+training_data_paths1 = [f"../data/raw/dumps_aggregated{train_id}.csv" for train_id in range(0, 13)]
+train_data1 = [pd.read_csv(os.path.join(script_path, path)) for path in training_data_paths1]
+
+training_data_paths2 = [f"../data/raw/dumps_aggregated{train_id}.csv" for train_id in range(13, 27)]
+train_data2 = [pd.read_csv(os.path.join(script_path, path)) for path in training_data_paths2]
+
+# Load the test data
+test_data_path = "../data/raw/dumps_aggregated3.csv"
+test_data = pd.read_csv(os.path.join(script_path, test_data_path))
 
 # Create the environment
-window_size = 20 # take last 5min=20*15s
-training_period = 20
-train_env = TrainEnv(data=train_data, window_size=window_size, training_period=training_period)
+window_size = 80 # 20 minutes
+episode_length = 240 # 1 hour
+train_env1 = SparseTrainEnv(data=train_data1, window_size=window_size, episode_length=episode_length)
+train_env2 = SparseTrainEnv(data=train_data2, window_size=window_size, episode_length=episode_length)
+
 
 # Create one vectorized environment
-vec_env = DummyVecEnv([lambda: train_env])
+vec_env = DummyVecEnv([lambda: train_env1, lambda: train_env2])
 
 # Create the model
-model = PPO("MlpPolicy", vec_env, verbose=1, ent_coef=0.001)
+if os.path.exists(os.path.join(script_path, f"../models/PPO_{window_size}_{episode_length}_trained.zip")):
+    model = PPO.load(os.path.join(script_path, f"../models/PPO_{window_size}_{episode_length}_trained.zip"))
+    model.set_env(vec_env)
+else:
+    model = PPO("MlpPolicy", vec_env, verbose=1, n_steps=4096)
+
+models_log_dir = os.path.join(script_path, "../logs/models")
+model.tensorboard_log = models_log_dir
 
 # Train the model
-model.learn(total_timesteps=100000, progress_bar=True)
+model.learn(total_timesteps=n_episodes_to_train * episode_length, progress_bar=True, log_interval=1, tb_log_name="PPO")
 
 # Save the model
-# model.save("../models/RL_trading_model")
+model_path = os.path.join(script_path, f"../models/PPO_{window_size}_{episode_length}.zip")
+model.save(model_path)
+
+environments_log_dir = os.path.join(script_path, "../logs/environments")
+# Save episode managers stats dicts to json
+with open(os.path.join(environments_log_dir, "train_env1_stats.json"), "w") as f:
+    json.dump(train_env1.episode_manager.stats, f)
+with open(os.path.join(environments_log_dir, "train_env2_stats.json"), "w") as f:
+    json.dump(train_env2.episode_manager.stats, f)
 
 # # Load the model
-# model = PPO.load("../models/RL_trading_model")
+model = PPO.load(model_path)
 
 # Evaluate the model
-test_env = TrainEnv(data=test_data, window_size=window_size, test_mode=True)
+test_env = SparseTrainEnv(data=[test_data], window_size=window_size, test_mode=True)
 obs, _ = test_env.reset()
 done = False
 reward = 0
 while not done:
-    action, _states = model.predict(obs)
+    action, _states = model.predict(obs, deterministic=True)
     obs, rewards, done, info, _ = test_env.step(action)
     reward += rewards
 
