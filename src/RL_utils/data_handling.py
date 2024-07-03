@@ -4,22 +4,23 @@ from typing import List, Tuple
 
 class EpisodeManager:
     """
-    A class that manages episodes and statistics for reinforcement learning.\n
+    A class that manages episodes and statistics for reinforcement learning.
+
     Stores the statistics about agent's fitness to given dataframes and episodes.
-    Fitness is calculated as the ratio of the exponentially weighted moving average (EWMA) score to the observed range of scores.
+    Fitness is calculated as the ratio of the moving average score to the observed range of scores.
 
     Args:
         dataframes (list): A list of dataframes.
         left_indent (int): The left indent value for episode statistics.
         right_indent (int): The right indent value for episode statistics.
         episod_step (int): The step for episode window.
-        alpha (float): The alpha value for calculating the exponentially weighted moving average (EWMA) score.
+        observation_window (int): The size of the observation window for calculating the mean score and fitness.
 
     Attributes:
         left_indent (int): The left indent value for episode statistics.
         right_indent (int): The right indent value for episode statistics.
         episod_step (int): The step size for episode statistics.
-        alpha (float): The alpha value for calculating the EWMA score.
+        observation_window (int): The size of the observation window for calculating the mean score and fitness.
         stats (dict): A dictionary that stores the statistics for each dataframe and episode.
 
     Methods:
@@ -31,11 +32,11 @@ class EpisodeManager:
             Selects an episode based on the fitness scores within a dataframe.
     """
 
-    def __init__(self, dataframes: List[pd.DataFrame], left_indent=20, right_indent=2, episod_step=1, alpha=0.1):
+    def __init__(self, dataframes: List[pd.DataFrame], left_indent=20, right_indent=2, episod_step=1, observation_window=10):
         self.left_indent = left_indent
         self.right_indent = right_indent
         self.episod_step = episod_step
-        self.alpha = alpha
+        self.observation_window = observation_window
         
         self.stats = {
             df_id: {
@@ -44,7 +45,8 @@ class EpisodeManager:
                     episode_start: {
                         "max_score": -np.inf,
                         "min_score": np.inf,
-                        "EWMA_score": 1e-6,
+                        "mean_score": 0,
+                        "scores": [], # List of last scores in observation window
                         "fitness": 1e-6
                     } for episode_start in range(self.left_indent, len(dataframes[df_id]) - self.right_indent, self.episod_step)
                 }
@@ -67,12 +69,14 @@ class EpisodeManager:
         # Update the episode stats
         episode_stats["max_score"] = max(episode_score, episode_stats["max_score"])
         episode_stats["min_score"] = min(episode_score, episode_stats["min_score"])
-        episode_stats["EWMA_score"] = self.alpha * episode_score + (1 - self.alpha) * episode_stats["EWMA_score"]
+        episode_stats["scores"].pop(0) if len(episode_stats["scores"]) == self.observation_window else None
+        episode_stats["scores"].append(episode_score)
+        episode_stats["mean_score"] = np.mean(episode_stats["scores"])
         prev_fitness = episode_stats["fitness"]
         
         # Update the fitness score
-        if episode_stats["max_score"] != episode_stats["min_score"]:  # Avoid division by zero
-            episode_stats["fitness"] = (episode_stats["EWMA_score"] - episode_stats["min_score"]) / (episode_stats["max_score"] - episode_stats["min_score"] + 1e-6)
+        if episode_stats["max_score"] - episode_stats["min_score"] > 1e-6: # Avoid division by zero
+            episode_stats["fitness"] = (episode_stats["mean_score"] - episode_stats["min_score"]) / (episode_stats["max_score"] - episode_stats["min_score"] + 1e-6)
         else:
             episode_stats["fitness"] = 1.0
 
