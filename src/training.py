@@ -1,4 +1,5 @@
-from RL_utils.training_env import TrainEnv, SparseTrainEnv
+from RL_utils.training_env import TrainEnv, SparseTrainEnv, KnifeEnv
+from RL_utils.reward_functions import calc_profit
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 import numpy as np
@@ -89,5 +90,7 @@ plt.vlines(buy_timestamps, ymin=min(price_scaled.min(), net_worth_scaled.min()),
 plt.vlines(sell_timestamps, ymin=min(price_scaled.min(), net_worth_scaled.min()), ymax=max(price_scaled.max(), net_worth_scaled.max()), colors='r', linestyles='dashed', label='Sell')
 plt.legend()
 plt.show()
+
+
 
 

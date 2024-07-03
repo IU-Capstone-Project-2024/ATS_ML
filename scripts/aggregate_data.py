@@ -58,7 +58,7 @@ def aggregate_for_timeframe(df, name_aggregation_column, period):
     return aggregated_df[['unix', 'agg_' + name_aggregation_column]]
 
 def preprocess_aggregated_df(df):
-    able_to_preprocess_columns=['agg_Close','agg_Low','agg_Volume','agg_Taker volume delta']
+    able_to_preprocess_columns=['agg_Close','agg_Low','agg_Volume']
     if 'agg_Close' in df.columns:
         df['Close']=df['agg_Close']
     
@@ -116,7 +116,7 @@ def get_dfs_aggregated(periods_unix, symbol='BTCUSDT',period='15s'):
             start_day_unix=df_aggtrades['unix'].iat[0]
             end_day_unix=df_aggtrades['unix'].iat[-1]
             
-            if period_unix[0]//1000<=start_day_unix//1000<=period_unix[1]//1000 and period_unix[0]//1000<=end_day_unix//1000<=period_unix[1]//1000:
+            if start_day_unix//1000<=period_unix[0]//1000<=end_day_unix//1000 and start_day_unix//1000<=period_unix[1]//1000<=end_day_unix//1000:
                 # corresponding dump period found
                 df_aggtrades=df_aggtrades[(df_aggtrades['unix'] >= period_unix[0]) & (df_aggtrades['unix'] <= period_unix[1])]
                 # print(len(df_aggtrades_dump)/len(df_aggtrades))
@@ -176,11 +176,24 @@ def get_dfs_aggregated(periods_unix, symbol='BTCUSDT',period='15s'):
 if __name__=="__main__":
     output_path="data/raw/dumps_aggregated"
     timestamps_unix = find_dump_intervals()
+    
+    print("dumps period")
     for timestamp_unix in timestamps_unix:
         print(convert_unix_to_utc_plus_3(timestamp_unix[0]),convert_unix_to_utc_plus_3(timestamp_unix[1]))
-    timestamps_unix=get_last_month_dates()
-    dfs_aggregated=get_dfs_aggregated(timestamps_unix)
-    for i in range (len(dfs_aggregated)):
-        dfs_aggregated[i].to_csv(output_path+str(i)+".csv", index=False)
+    
+    # add 5 additional min after dump, to let model understand when to sell
+    timestamps_unix_adjusted=[]
+    for start_unix, end_unix in timestamps_unix:
+        timestamps_unix_adjusted.append((start_unix,end_unix+300000))
+    
+    dfs_aggregated=get_dfs_aggregated(timestamps_unix_adjusted)
+    for df in dfs_aggregated:
+        for column in df.columns:
+            if column!='unix':
+                print(column, max(df[column]),min(df[column]))
+    
+    # first and last rows deleted manually, since have invalid values
+    # for i in range (len(dfs_aggregated)):
+    #     dfs_aggregated[i].to_csv(output_path+str(i)+".csv", index=False)
 
 # TODO: external/aggTrades dvc
