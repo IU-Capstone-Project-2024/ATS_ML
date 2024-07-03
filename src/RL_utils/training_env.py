@@ -192,6 +192,9 @@ class SparseTrainEnv(gym.Env):
         self.transaction_cost_pct = transaction_cost_pct
         self.balance = 10000 # Initial balance
         self.entering_balance = 10000 # Initial balance
+        self.entering_step = self.current_step # Step at which the episode started
+        self.exit_price = None # Price at which the tokens were sold
+        self.exit_step = None # Step at which the tokens were sold
         self.tokens_held = 0 # Number of tokens held
         self.total_transactions = 0 # Total number of transactions
         self.past_actions = [] # List of past actions taken
@@ -228,6 +231,9 @@ class SparseTrainEnv(gym.Env):
         
         self.balance = 10000
         self.entering_balance = 10000
+        self.entering_step = self.current_step
+        self.exit_price = None
+        self.exit_step = None
         self.tokens_held = 0
         self.total_transactions = 0
         self.past_actions = []
@@ -257,10 +263,10 @@ class SparseTrainEnv(gym.Env):
         done = self.current_step >= self.last_time_step
 
         reward = self._get_reward(done)
+        self.cumulative_reward += reward
         # Update the episode statistics if the episode is done
         if done:
-            self.episode_manager.update_stats(self.df_id, self.episode_start, reward)
-        self.cumulative_reward += reward
+            self.episode_manager.update_stats(self.df_id, self.episode_start, self.cumulative_reward)
 
         return self._next_observation(), reward, done, False, {}
     
@@ -298,6 +304,7 @@ class SparseTrainEnv(gym.Env):
         if action == 1:  # Buy
             if self.balance > 0:
                 self.entering_balance = self.balance
+                self.entering_step = self.current_step
                 tokens_bought = self.balance / current_price * (1 - self.transaction_cost_pct)
                 self.tokens_held = tokens_bought
                 self.balance = 0
@@ -308,6 +315,8 @@ class SparseTrainEnv(gym.Env):
                 self.past_actions.append((timestamp, 'Hold', current_price, self.balance, self.tokens_held))
         elif action == 2:  # Sell
             if self.tokens_held > 0:
+                self.exit_price = current_price
+                self.exit_step = self.current_step
                 self.balance = self.tokens_held * current_price * (1 - self.transaction_cost_pct)
                 self.tokens_held = 0
                 self.total_transactions += 1
@@ -332,9 +341,12 @@ class SparseTrainEnv(gym.Env):
             final_net_worth = self.balance + self.tokens_held * self.data[self.df_id]['Close'].iloc[self.current_step]
             reward = (final_net_worth / 10000 - 1) * 100  # Total net worth as a percentage gain
             reward -= self.max_price_gap * 100 # Use the maximum price gap as a baseline for the reward
-
-        elif self.past_actions and self.past_actions[-1][1] == 'Sell':
+        elif self.current_step == self.exit_step: # Just sold the tokens
             reward = (self.balance / self.entering_balance - 1) * 100  # Profit as a percentage gain
+        elif self.tokens_held > 0: # Holding the tokens
+            reward = (self.data[self.df_id]['Close'].iloc[self.current_step] / self.data[self.df_id]['Close'].iloc[self.entering_step] - 1) / (self.current_step - self.entering_step) * 100  # Average profit per step
+        elif self.balance > 0 and self.exit_step is not None: # Sold tokens some time ago
+            reward = -(self.data[self.df_id]['Close'].iloc[self.current_step] / self.exit_price - 1) / (self.current_step - self.exit_step) * 100  # Average regret per step
         else:
             reward = 0  # Intermediate steps do not contribute to the reward directly
         reward -= self.action_rule_violation
