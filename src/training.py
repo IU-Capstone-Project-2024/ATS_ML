@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import time
 import json
 
-n_episodes_to_train = 10000
+n_episodes_to_train = 20_000
 
 script_path = os.path.dirname(os.path.abspath(__file__))
 
@@ -30,8 +30,8 @@ train_env = KnifeEnv(data=train_data, window_size=window_size, episode_length=ep
 vec_env = DummyVecEnv([lambda: train_env])
 
 # Create the model
-if os.path.exists(os.path.join(script_path, f"../models/PPO_{window_size}_{episode_length}_trained.zip")):
-    model = PPO.load(os.path.join(script_path, f"../models/PPO_{window_size}_{episode_length}_trained.zip"))
+if os.path.exists(os.path.join(script_path, f"../models/PPO_knife_{window_size}_{episode_length}_trained.zip")):
+    model = PPO.load(os.path.join(script_path, f"../models/PPO_knife_{window_size}_{episode_length}_trained.zip"))
     model.set_env(vec_env)
 else:
     model = PPO("MlpPolicy", vec_env, verbose=1, n_steps=4096, ent_coef=0.01)
@@ -111,5 +111,3 @@ plt.title('Price Chart with Entry and Exit Timestamps')
 plt.legend()
 plt.grid(True)
 plt.show()
-
-# TODO: give more reward for buys on deep

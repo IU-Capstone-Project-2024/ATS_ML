@@ -349,6 +349,7 @@ def print_step(self):
         
 
 class KnifeEnv(gym.Env):
+    # specified environment for training in high volatility periods
     def __init__(self, 
             data: List[pd.DataFrame], 
             window_size, 
@@ -439,7 +440,7 @@ class KnifeEnv(gym.Env):
             current_profitloss=0
         # if have opened trade
         elif self.trades[-1].exit_price==None:
-            current_profitloss = calc_profit(self.trades[-1].entry_price,current_price)
+            current_profitloss = calc_profit(self.trades[-1].entry_price,current_price)-0.1
             self.trades[-1].profit=current_profitloss
         
         # Previous observations + unrealized profit if have opened trade + previous action
@@ -479,7 +480,7 @@ class KnifeEnv(gym.Env):
             
             # if action is do nothing and trade is opened, return unrealized profit
             if action==0 and current_trade.exit_price==None:
-                reward=5*calc_profit(current_trade.entry_price, current_price)
+                reward=5*(calc_profit(current_trade.entry_price, current_price)-0.1)
                 
             # if action is to buy, when trade is opened, return penalty
             elif action==1 and current_trade.exit_price==None:
@@ -487,7 +488,7 @@ class KnifeEnv(gym.Env):
                 
             # if action is to sell, when trade is closed in current step, return reward
             elif action==2 and current_trade.exit_price==current_price:
-                reward=testOrder_reward(current_trade)
+                reward=testOrder_reward(current_trade, self.data[self.df_id])
                 
         # if episode didnt end and not have opened trade
         elif not done and current_trade==None:
@@ -504,7 +505,7 @@ class KnifeEnv(gym.Env):
             
         # If episode end, return reward for all trades
         elif done:
-            reward=sum(testOrder_reward(testOrder) for testOrder in self.trades)
+            reward=sum(testOrder_reward(testOrder, self.data[self.df_id]) for testOrder in self.trades)*pow(len(self.trades),0.5)
             # penalize for no trades
             if reward==0:
                 reward=-1

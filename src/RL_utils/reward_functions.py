@@ -1,7 +1,26 @@
-def testOrder_reward(testOrder):
+def testOrder_reward(testOrder,df):
     # calculates reward for testOrder object
-    
     reward=0
+    
+    # df contains rows with 15 second aggregated data
+    rows_after_buy=df[df['unix']>=testOrder.entry_timestamp]
+    
+    max_price=max(rows_after_buy['Close'])
+    min_price=min(rows_after_buy['Close'])
+    max_potential_profit=calc_profit(testOrder.entry_price,max_price)-0.1
+    min_potential_loss=calc_profit(testOrder.entry_price,min_price)-0.1
+    
+    # # if bought on deep, fix further division by 0 and exploding gradient
+    # if abs(min_potential_loss)<=0.2:
+    #     # potential loss is a fee + loss
+    #     min_potential_loss=abs(min_potential_loss)
+    
+    # potential Profit/Loss ratio=[bad 0..1..7 good]
+    if abs(max_potential_profit/min_potential_loss)<=1:
+        reward-=1/abs(max_potential_profit/min_potential_loss)# [-100,-10]
+    else:
+        reward+=abs(max_potential_profit/min_potential_loss)*5 # [5..35]
+    
     real_profitloss=calc_profit(testOrder.entry_price,testOrder.exit_price)
     
     # action sell was performed
@@ -18,11 +37,11 @@ def testOrder_reward(testOrder):
         reward+=testOrder.profit*5
     
     # estimates time in trade. Preferably be in trade less than 300 seconds
-    reward= reward + (0.5-time_in_trade/600)
+    reward= reward + (1-time_in_trade/300)
     
     # find rewards out of bounds
-    if reward<=-1 or reward>=2:
-        pass
+    if reward>=20 or reward<=-50:
+        print(reward)
     return reward
 
 def calc_profit(entry_price, exit_price):
@@ -33,5 +52,5 @@ def calc_profit(entry_price, exit_price):
     else:
         # if bought but not sold
         profitloss=None
-        
+    
     return profitloss
