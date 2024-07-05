@@ -386,7 +386,7 @@ class KnifeEnv(gym.Env):
         self.action_space = spaces.Discrete(3)
         self.previous_action=0 # do nothing by default
         
-        self.low=np.array ([-1000,-1000,-1000,10]*self.window_size + [-1,0])
+        self.low=np.array ([-1000,-1000,-1000,10]*self.window_size + [-1.5,0])
         self.high=np.array([1000,  1000, 1000, 20000]*self.window_size+[1,2])
         
         # Previous observations * window_size (unix and Close dropped) + current profit + previous_action. Dimension: (4*20+2)x1
@@ -480,11 +480,11 @@ class KnifeEnv(gym.Env):
             
             # if action is do nothing and trade is opened, return unrealized profit
             if action==0 and current_trade.exit_price==None:
-                reward=5*(calc_profit(current_trade.entry_price, current_price)-0.1)
+                reward=10*(calc_profit(current_trade.entry_price, current_price)-0.1)
                 
             # if action is to buy, when trade is opened, return penalty
             elif action==1 and current_trade.exit_price==None:
-                reward=-0.3
+                reward=-1
                 
             # if action is to sell, when trade is closed in current step, return reward
             elif action==2 and current_trade.exit_price==current_price:
@@ -496,19 +496,19 @@ class KnifeEnv(gym.Env):
         
         # Penalties for same action=(1,2) in row
         elif self.previous_action==action and action!=0:
-            reward= -0.3
+            reward= -1
         elif self.previous_action==action and action==0:
             reward= 0
         # Penalty for sell, if not have opened trade
         elif current_trade==None and action==2:
-            reward=-0.3
+            reward=-1
             
         # If episode end, return reward for all trades
         elif done:
             reward=sum(testOrder_reward(testOrder, self.data[self.df_id]) for testOrder in self.trades)*pow(len(self.trades),0.5)
-            # penalize for no trades
+            # penalty for no trades = half of bad trade
             if reward==0:
-                reward=-1
+                reward=-10
         
         self.rewards.append(reward)
         return reward

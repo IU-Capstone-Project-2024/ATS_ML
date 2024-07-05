@@ -10,23 +10,22 @@ def testOrder_reward(testOrder,df):
     max_potential_profit=calc_profit(testOrder.entry_price,max_price)-0.1
     min_potential_loss=calc_profit(testOrder.entry_price,min_price)-0.1
     
-    # # if bought on deep, fix further division by 0 and exploding gradient
-    # if abs(min_potential_loss)<=0.2:
-    #     # potential loss is a fee + loss
-    #     min_potential_loss=abs(min_potential_loss)
+    # if bought on high, fix further division by 0 and exploding gradient
+    if max_potential_profit<=0.1:
+        max_potential_profit= -0.1
     
     # potential Profit/Loss ratio=[bad 0..1..7 good]
     if abs(max_potential_profit/min_potential_loss)<=1:
-        reward-=1/abs(max_potential_profit/min_potential_loss)# [-100,-10]
+        reward-=1/abs(max_potential_profit/min_potential_loss) #[-20..-1]
     else:
-        reward+=abs(max_potential_profit/min_potential_loss)*5 # [5..35]
+        reward+=abs(max_potential_profit/min_potential_loss) # [1..10]
     
     real_profitloss=calc_profit(testOrder.entry_price,testOrder.exit_price)
     
     # action sell was performed
     if real_profitloss!=None:
-        testOrder.profit=real_profitloss
-        reward+=testOrder.profit*10
+        testOrder.profit=real_profitloss-0.1
+        reward+=testOrder.profit*40 # [-40..20]
         time_in_trade=(testOrder.exit_timestamp-testOrder.entry_timestamp)/1000
     
     # only bought, but didnt sell
@@ -34,17 +33,17 @@ def testOrder_reward(testOrder,df):
         time_in_trade=300 # neutral about time in trade
         
         # keep testOrder.profit= unrealized profit 
-        reward+=testOrder.profit*5
+        reward+=testOrder.profit*10 # [-10..5]
     
     # estimates time in trade. Preferably be in trade less than 300 seconds
-    reward= reward + (1-time_in_trade/300)
+    reward= reward + (1-time_in_trade/300)*5 # [-10,5]
     
     # find rewards out of bounds
-    if reward>=20 or reward<=-50:
+    if reward>=20:
         print(reward)
     return reward
 
-def calc_profit(entry_price, exit_price):
+def calc_profit(entry_price, exit_price, fee=0.1):
     if exit_price!=None and entry_price!=None:
         profitloss=(exit_price/entry_price-1)*100
         if profitloss<=-1 or profitloss>=1:

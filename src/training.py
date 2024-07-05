@@ -9,41 +9,41 @@ import matplotlib.pyplot as plt
 import time
 import json
 
-n_episodes_to_train = 20_000
+n_episodes_to_train = 10_000
 
 script_path = os.path.dirname(os.path.abspath(__file__))
 
 # Load the training data
-training_data_paths = [f"../data/raw/dumps_aggregated{train_id}.csv" for train_id in range(0, 4)]
+training_data_paths = [f"../data/raw/dumps_aggregated{train_id}.csv" for train_id in range(0, 3)]
 train_data = [pd.read_csv(os.path.join(script_path, path)) for path in training_data_paths]
 
 # Load the test data
 test_data_path = "../data/raw/dumps_aggregated4.csv"
 test_data = pd.read_csv(os.path.join(script_path, test_data_path))
 
-# Create the environment
+# # Create the environment
 window_size = 20 # 5 minutes
 episode_length = 40 # 10 minutes
 train_env = KnifeEnv(data=train_data, window_size=window_size, episode_length=episode_length)
 
-# Create one vectorized environment
+# # Create one vectorized environment
 vec_env = DummyVecEnv([lambda: train_env])
 
-# Create the model
+# # Create the model
 if os.path.exists(os.path.join(script_path, f"../models/PPO_knife_{window_size}_{episode_length}_trained.zip")):
     model = PPO.load(os.path.join(script_path, f"../models/PPO_knife_{window_size}_{episode_length}_trained.zip"))
     model.set_env(vec_env)
 else:
     model = PPO("MlpPolicy", vec_env, verbose=1, n_steps=4096, ent_coef=0.01)
 
-# Set the tensorboard log directory
+# # Set the tensorboard log directory
 models_log_dir = os.path.join(script_path, "../logs/models")
 model.tensorboard_log = models_log_dir
 
 # Train the model
 model.learn(total_timesteps=n_episodes_to_train * episode_length, progress_bar=True, log_interval=1, tb_log_name="PPO")
 
-# Save the model
+# # Save the model
 model_path = os.path.join(script_path, f"../models/PPO_{window_size}_{episode_length}.zip")
 model.save(model_path)
 
@@ -111,3 +111,6 @@ plt.title('Price Chart with Entry and Exit Timestamps')
 plt.legend()
 plt.grid(True)
 plt.show()
+
+# TODO:
+# It is hard for RL to understand patterns, need to preprocess data to flags: large movement, large taker volume, half movement of dump
