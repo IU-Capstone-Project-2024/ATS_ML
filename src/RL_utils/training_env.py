@@ -45,9 +45,9 @@ class SparseTrainEnv(gym.Env):
         self.episod_temp = episod_temp
 
         # Reward parameters
-        self.short_distance_weight=-2 # c
+        self.short_distance_weight=-1.8 # c
         self.long_distance_weight=0.1 # a
-        self.least_penalized_distance=5 # x_min
+        self.least_penalized_distance=10 # x_min
         self.min_penalty_scale = 1 # b
 
         self.zero_distance_penalty = self.calculate_zero_distance_penalty()       
@@ -57,6 +57,9 @@ class SparseTrainEnv(gym.Env):
         self.distance_weight_sum = self.long_distance_weight + self.short_distance_weight
         self.distance_const_diff = self.min_penalty_scale - self.zero_distance_penalty
         self.distance_const_sum = self.min_penalty_scale + self.zero_distance_penalty 
+
+        self.transaction_time_penalty = 0.3
+        self.transaction_time_const = -0.6
 
 
         # Initialize the current dataframe and step
@@ -81,6 +84,7 @@ class SparseTrainEnv(gym.Env):
         self.exit_step = self.current_step # Step at which the tokens were sold
         self.tokens_held = 0 # Number of tokens held
         self.total_transactions = 0 # Total number of transactions
+        self.last_transaction_step = None # Step at which the last transaction was made
         self.past_actions = [] # List of past actions taken
         self.cumulative_reward = 0 # Total reward over the episode
         self.action_rule_violation = False # Flag indicating whether an action rule was violated (e.g., buying without sufficient balance)
@@ -122,6 +126,7 @@ class SparseTrainEnv(gym.Env):
         self.exit_step = self.current_step
         self.tokens_held = 0
         self.total_transactions = 0
+        self.last_transaction_step = None
         self.past_actions = []
         self.cumulative_reward = 0
         self.action_rule_violation = False
@@ -152,7 +157,7 @@ class SparseTrainEnv(gym.Env):
         self.cumulative_reward += reward
         # Update the episode statistics if the episode is done
         if done:
-            self.episode_manager.update_stats(self.df_id, self.episode_start, self.cumulative_reward)
+            self.episode_manager.update_stats(self.df_id, self.episode_start, reward)
 
         return self._next_observation(), reward, done, False, {}
     
@@ -235,6 +240,15 @@ class SparseTrainEnv(gym.Env):
             reward -= self.max_price_gap * 100 # Use the maximum observed price gap as a baseline for the reward
         elif self.current_step == self.exit_step: # Just sold the tokens
             reward = (self.exit_balance / self.entering_balance - 1) * 100  # Profit for the closed trade as a percentage gain
+            if self.last_transaction_step is not None:
+                time_since_last_transaction = self.current_step - self.last_transaction_step
+                reward += self._calculate_transaction_time_penalty(time_since_last_transaction)
+            self.last_transaction_step = self.current_step
+        elif self.current_step == self.entering_step: # Just bought the tokens
+            reward = 0  # No reward for buying
+            if self.last_transaction_step is not None:
+                time_since_last_transaction = self.current_step - self.last_transaction_step
+                reward += self._calculate_transaction_time_penalty(time_since_last_transaction)
         elif self.tokens_held > 0 and self.current_step > self.entering_step: # Holding the tokens
             running_gain = (current_price / self.entering_price - 1) * 100 # Running profit from open trade as a percentage gain
             steps_distance = self.current_step - self.entering_step # Number of steps since the trade was opened
@@ -275,11 +289,25 @@ class SparseTrainEnv(gym.Env):
         
         To calculate y we use the following formula:
         
-        y = 1/2 * ((a + c)x + (b + d) + sqrt(((a - c)x + (b - d)))^2 + 4)"""
+        y = 1/2 * ((a + c)x + (b + d) + sqrt(((a - c)x + (b - d))^2 + 4)"""
         distance_penalty_multiplier = ((self.distance_weight_sum * distance) + self.distance_const_sum)
         distance_penalty_multiplier += np.sqrt(np.square(self.distance_weight_diff * distance + self.distance_const_diff) + 4)
         distance_penalty_multiplier /= 2
         return distance_penalty_multiplier
+    
+    def _calculate_transaction_time_penalty(self, elapsed_time):
+        """
+        Calculate the penalty for transaction time.
+        This function uses hyperbolic function to calculate the penalty multiplier for reward.
+        One asymptote y = 0
+        Second asymptote y = ax + b
+
+        Penalty is calculated as:
+        y = 1/2 * (ax + b - sqrt((ax + b)^2 + 4))"""
+        transaction_time_penalty = self.transaction_time_const + self.transaction_time_penalty * elapsed_time
+        transaction_time_penalty -= np.sqrt(np.square(self.transaction_time_penalty * elapsed_time + self.transaction_time_const) + 4)
+        transaction_time_penalty /= 2
+        return transaction_time_penalty
 
     
 def print_step(self):
