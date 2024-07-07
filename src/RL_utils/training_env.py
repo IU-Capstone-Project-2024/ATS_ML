@@ -44,6 +44,21 @@ class SparseTrainEnv(gym.Env):
         self.episode_length = episode_length
         self.episod_temp = episod_temp
 
+        # Reward parameters
+        self.short_distance_weight=-2 # c
+        self.long_distance_weight=0.1 # a
+        self.least_penalized_distance=5 # x_min
+        self.min_penalty_scale = 1 # b
+
+        self.zero_distance_penalty = self.calculate_zero_distance_penalty()       
+
+        
+        self.distance_weight_diff = self.long_distance_weight - self.short_distance_weight
+        self.distance_weight_sum = self.long_distance_weight + self.short_distance_weight
+        self.distance_const_diff = self.min_penalty_scale - self.zero_distance_penalty
+        self.distance_const_sum = self.min_penalty_scale + self.zero_distance_penalty 
+
+
         # Initialize the current dataframe and step
         if not self.test_mode:
             self.df_id, self.episode_start = self.episode_manager.select_episode(temperature=self.episod_temp)
@@ -59,9 +74,11 @@ class SparseTrainEnv(gym.Env):
         self.transaction_cost_pct = transaction_cost_pct
         self.balance = 10000 # Initial balance
         self.entering_balance = 10000 # Initial balance
+        self.entering_price = self.data[self.df_id]['Close'].iloc[self.current_step] # Price at which the tokens were bought
         self.entering_step = self.current_step # Step at which the episode started
-        self.exit_price = None # Price at which the tokens were sold
-        self.exit_step = None # Step at which the tokens were sold
+        self.exit_balance = 10000 # Balance after selling the tokens
+        self.exit_price = self.data[self.df_id]['Close'].iloc[self.current_step]  # Price at which the tokens were sold
+        self.exit_step = self.current_step # Step at which the tokens were sold
         self.tokens_held = 0 # Number of tokens held
         self.total_transactions = 0 # Total number of transactions
         self.past_actions = [] # List of past actions taken
@@ -98,9 +115,11 @@ class SparseTrainEnv(gym.Env):
         
         self.balance = 10000
         self.entering_balance = 10000
+        self.entering_price = self.data[self.df_id]['Close'].iloc[self.current_step]
         self.entering_step = self.current_step
-        self.exit_price = None
-        self.exit_step = None
+        self.exit_balance = 10000
+        self.exit_price = self.data[self.df_id]['Close'].iloc[self.current_step]
+        self.exit_step = self.current_step
         self.tokens_held = 0
         self.total_transactions = 0
         self.past_actions = []
@@ -147,8 +166,10 @@ class SparseTrainEnv(gym.Env):
         frame = self.data[self.df_id].iloc[self.current_step - self.window_size + 1:self.current_step + 1]
         current_price = self.data[self.df_id]['Close'].iloc[self.current_step]
         obs = frame.values[:, 2:].flatten()
-        current_profit = self.balance + self.tokens_held * current_price
-        current_profit = (current_profit / 10000 - 1)
+        if self.tokens_held > 0:
+            current_profit = (current_price / self.data[self.df_id]['Close'].iloc[self.entering_step] - 1) * 100
+        else:
+            current_profit = 0
         obs = np.append(obs, [current_profit, self.tokens_held > 0]) # Previous observations + current profit + holding flag
 
         if current_price < self.min_observed_price:
@@ -171,6 +192,7 @@ class SparseTrainEnv(gym.Env):
         if action == 1:  # Buy
             if self.balance > 0:
                 self.entering_balance = self.balance
+                self.entering_price = current_price 
                 self.entering_step = self.current_step
                 tokens_bought = self.balance / current_price * (1 - self.transaction_cost_pct)
                 self.tokens_held = tokens_bought
@@ -182,9 +204,10 @@ class SparseTrainEnv(gym.Env):
                 self.past_actions.append((timestamp, 'Hold', current_price, self.balance, self.tokens_held))
         elif action == 2:  # Sell
             if self.tokens_held > 0:
+                self.balance = self.tokens_held * current_price * (1 - self.transaction_cost_pct)
+                self.exit_balance = self.balance
                 self.exit_price = current_price
                 self.exit_step = self.current_step
-                self.balance = self.tokens_held * current_price * (1 - self.transaction_cost_pct)
                 self.tokens_held = 0
                 self.total_transactions += 1
                 self.past_actions.append((timestamp, 'Sell', current_price, self.balance, self.tokens_held))
@@ -204,24 +227,60 @@ class SparseTrainEnv(gym.Env):
         Returns:
         - reward (float): The reward for the current state.
         """
+
+        current_price = self.data[self.df_id]['Close'].iloc[self.current_step]
         if done:
-            final_net_worth = self.balance + self.tokens_held * self.data[self.df_id]['Close'].iloc[self.current_step]
-            reward = (final_net_worth / 10000 - 1) * 100  # Total net worth as a percentage gain
-            reward -= self.max_price_gap * 100 # Use the maximum price gap as a baseline for the reward
+            final_net_worth = self.balance + self.tokens_held * current_price
+            reward = (final_net_worth / 10000 - 1) * 100  # Total profit for the episode as a percentage gain
+            reward -= self.max_price_gap * 100 # Use the maximum observed price gap as a baseline for the reward
         elif self.current_step == self.exit_step: # Just sold the tokens
-            reward = (self.balance / self.entering_balance - 1) * 100  # Profit as a percentage gain
+            reward = (self.exit_balance / self.entering_balance - 1) * 100  # Profit for the closed trade as a percentage gain
         elif self.tokens_held > 0 and self.current_step > self.entering_step: # Holding the tokens
-            gain = (self.data[self.df_id]['Close'].iloc[self.current_step] / self.data[self.df_id]['Close'].iloc[self.entering_step] - 1) * 100
-            log_distance =0.1 * np.log(self.current_step - self.entering_step + 1) # Logarithm of the holding period
-            reward = gain / log_distance  # Gain per log step
-        elif self.balance > 0 and self.exit_step is not None and self.current_step > self.exit_step: # Sold tokens some time ago
-            regret = -(self.data[self.df_id]['Close'].iloc[self.current_step] / self.exit_price - 1) * 100
-            log_distance = 0.1 * np.log(self.current_step - self.exit_step + 1) # Logarithm of the elapsed time
-            reward = regret / log_distance  # Regret per log step
+            running_gain = (current_price / self.entering_price - 1) * 100 # Running profit from open trade as a percentage gain
+            steps_distance = self.current_step - self.entering_step # Number of steps since the trade was opened
+            distance_multiplier = self._distance_penalty_multiplier(steps_distance)
+            reward = running_gain * distance_multiplier # Running profit adjusted by the distance penalty
+        elif self.balance > 0 and self.current_step > self.exit_step: # Sold tokens some time ago
+            regret = -(current_price / self.exit_price - 1) * 100 # Regret for not holding the tokens as a percentage loss
+            steps_distance = self.current_step - self.exit_step # Number of steps since the trade was closed
+            distance_multiplier = self._distance_penalty_multiplier(steps_distance)
+            reward = regret * distance_multiplier # Regret adjusted by the distance penalty
         else:
             reward = 0  # Intermediate steps do not contribute to the reward directly
         reward -= self.action_rule_violation
         return reward
+    
+    def calculate_zero_distance_penalty(self):
+        """
+        Calculate the penalty for zero distance (d)
+        """
+        ### d = b + x_min(a - c) + sqrt(-ac(a + c)^2) / ac
+        distance_weight_diff = self.long_distance_weight - self.short_distance_weight
+        distance_weight_sum = self.long_distance_weight + self.short_distance_weight
+        distance_weight_product = self.long_distance_weight * self.short_distance_weight
+        zero_distance_penalty = self.min_penalty_scale + self.least_penalized_distance * distance_weight_diff
+        zero_distance_penalty += np.sqrt(-distance_weight_product * np.square(distance_weight_sum)) / distance_weight_product
+        return zero_distance_penalty
+
+
+    
+    def _distance_penalty_multiplier(self, distance):
+        """
+        This function uses hyperbolic function to calculate the penalty multiplier for reward.
+        Hyperbolic function is represented as (y - ax - b)(y - cx - d) = 1
+        y = distance_penalty_multiplier
+
+        y - ax - b is a long distance penalty scaling asymptote. Used to penalize the agent for long inactive periods.
+        y - cx - d is a short distance penalty scaling asymptote. Used to penalize the agent for localy non-optimal actions.
+        
+        To calculate y we use the following formula:
+        
+        y = 1/2 * ((a + c)x + (b + d) + sqrt(((a - c)x + (b - d)))^2 + 4)"""
+        distance_penalty_multiplier = ((self.distance_weight_sum * distance) + self.distance_const_sum)
+        distance_penalty_multiplier += np.sqrt(np.square(self.distance_weight_diff * distance + self.distance_const_diff) + 4)
+        distance_penalty_multiplier /= 2
+        return distance_penalty_multiplier
+
     
 def print_step(self):
         df_stats = self.episode_manager.stats
