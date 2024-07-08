@@ -357,7 +357,6 @@ class KnifeEnv(gym.Env):
             observation_window=10,
             episode_step=20, 
             episode_temp=1,
-            transaction_cost_pct=0.001, 
             test_mode=False
             ):
         super(KnifeEnv, self).__init__()
@@ -370,15 +369,18 @@ class KnifeEnv(gym.Env):
         self.episode_temp = episode_temp
         
         # Initialize the current dataframe and step
+        self.df_count=[0 for _ in range (len(self.data))]
         if not self.test_mode:
             self.df_id, self.episode_start = self.episode_manager.select_episode(temperature=self.episode_temp)
             self.current_step = self.episode_start
             self.last_step = min(self.current_step + self.episode_length, len(self.data[self.df_id]) - 2)
+            self.df_count[self.df_id]+=1
         else:
             self.df_id = self.episode_manager.select_dataframe(temperature=self.episode_temp)
             self.episode_start = self.window_size
             self.current_step = self.episode_start
             self.last_step = len(self.data[self.df_id]) - 2
+            self.df_count[self.df_id]+=1
         
         # environment parameters 
         self.trades=[]
@@ -402,11 +404,13 @@ class KnifeEnv(gym.Env):
             self.df_id, self.episode_start = self.episode_manager.select_episode(temperature=self.episode_temp)
             self.current_step = self.episode_start
             self.last_step = min(self.current_step + self.episode_length, len(self.data[self.df_id]) - 2)
+            self.df_count[self.df_id]+=1
         else:
             self.df_id = self.episode_manager.select_dataframe(temperature=self.episode_temp)
             self.episode_start = self.window_size
             self.current_step = self.episode_start
             self.last_step = len(self.data[self.df_id]) - 2
+            self.df_count[self.df_id]+=1
         
         self.trades=[]
         self.previous_action=0
@@ -415,22 +419,25 @@ class KnifeEnv(gym.Env):
     def step(self, action):
         # Evaluate, if action is possible. Then get reward for episode
         self._take_action(action)
-        self.current_step += 1
         # flag for reseting environment
         done = self.current_step >= self.last_step
         # Analyze action
         reward = self._get_reward(action, done)
+        
         self.previous_action=action
+        self.current_step += 1
+
         if done:
             self.episode_manager.update_stats(self.df_id, self.episode_start, reward)
-            info= {'trades' : self.trades, 'rewards':self.rewards}
+            info= {'trades' : self.trades, 'rewards':self.rewards, 'df_count':self.df_count}
+            self.render()
         else:
             info = {}
         return self._next_observation(), reward, done, False, info
     
     def _next_observation(self):
         # new data
-        frame = self.data[self.df_id].iloc[self.current_step - self.window_size + 1:self.current_step + 1]
+        frame = self.data[self.df_id].iloc[self.current_step - self.window_size:self.current_step]
         obs = frame.values[:, [1,3,4,5]].flatten()
         current_price = self.data[self.df_id]['Close'].iloc[self.current_step]
         
@@ -466,45 +473,55 @@ class KnifeEnv(gym.Env):
             # if previous order only bought
             if len(self.trades)>0 and self.trades[-1].exit_price==None:
                 self.trades[-1].exit_price=current_price
-                self.trades[-1].exit_timestamp=current_timestamp        
+                self.trades[-1].exit_timestamp=current_timestamp  
         else: # do nothing
             pass
     
     def _get_reward(self, action, done):
         current_price=self.data[self.df_id]['Close'].iloc[self.current_step]
+        current_timestamp=self.data[self.df_id]['unix'].iloc[self.current_step]
         # if have opened trade, or trade which is closed in current price
         current_trade=self.trades[-1] if len(self.trades)>0 and (self.trades[-1].exit_price==None or self.trades[-1].exit_price==current_price) else None
         
         # if episode didnt end and have opened trade
         if not done and current_trade!=None:
             
-            # if action is do nothing and trade is opened, return unrealized profit
-            if action==0 and current_trade.exit_price==None:
+            # if action is do nothing and have opened trade   or just bought and trade is opened, return unrealized profit
+            if (action==0 and current_trade.exit_price==None) or (action==1 and current_trade.entry_timestamp==current_timestamp):
                 reward=10*(calc_profit(current_trade.entry_price, current_price)-0.1)
                 
-            # if action is to buy, when trade is opened, return penalty
-            elif action==1 and current_trade.exit_price==None:
-                reward=-1
+            # if action is to buy and have opened trade, when trade is opened not in current timestamp, return penalty. Penalty should be harder than profitloss
+            elif action==1 and current_trade.exit_price==None and current_trade.entry_timestamp!=current_timestamp:
+                reward=-10
                 
             # if action is to sell, when trade is closed in current step, return reward
             elif action==2 and current_trade.exit_price==current_price:
                 reward=testOrder_reward(current_trade, self.data[self.df_id])
-                
-        # if episode didnt end and not have opened trade
-        elif not done and current_trade==None:
-            reward=0
         
-        # Penalties for same action=(1,2) in row
-        elif self.previous_action==action and action!=0:
-            reward= -1
-        elif self.previous_action==action and action==0:
-            reward= 0
-        # Penalty for sell, if not have opened trade
+
+        # Penalties
+        # if episode didnt end and not have opened trade
+        elif not done and current_trade==None and action==0:
+            if len(self.trades)>0:
+                time_since_last_trade=(current_timestamp-self.trades[-1].exit_timestamp)/1000 
+            else:
+                start_episode_timestamp=self.data[self.df_id]['unix'].iloc[self.episode_start]
+                time_since_last_trade=(current_timestamp-start_episode_timestamp)/1000
+
+            # Gradually increase penalty
+            reward= (time_since_last_trade/1200)*(-10)
+        
+        # Sell, if not have opened trade
         elif current_trade==None and action==2:
-            reward=-1
-            
+            reward=-10
+
+        # Same action=(1,2) in row
+        elif not done and self.previous_action==action and action!=0:
+            reward= -10
+
         # If episode end, return reward for all trades
-        elif done:
+        if done:
+            # cumulative reward for all actions * amount actions
             reward=sum(testOrder_reward(testOrder, self.data[self.df_id]) for testOrder in self.trades)*pow(len(self.trades),0.5)
             # penalty for no trades = half of bad trade
             if reward==0:
@@ -515,5 +532,5 @@ class KnifeEnv(gym.Env):
     
     def render(self):
         # Print current info
-        # print(self._get_reward())
+        print(self.df_id, 'df% ', self.df_count[self.df_id]/sum(self.df_count),' #trades ',len(self.trades),' episode reward ',self._get_reward(self.previous_action,True))
         pass

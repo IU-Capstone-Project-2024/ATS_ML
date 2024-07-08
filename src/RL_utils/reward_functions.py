@@ -25,8 +25,11 @@ def testOrder_reward(testOrder,df):
     # action sell was performed
     if real_profitloss!=None:
         testOrder.profit=real_profitloss-0.1
-        reward+=testOrder.profit*40 # [-40..20]
+        reward+=testOrder.profit*60 # [-60..30]
         time_in_trade=(testOrder.exit_timestamp-testOrder.entry_timestamp)/1000
+        # Penalty for too little time in trade
+        if time_in_trade<=30:
+            time_in_trade=600
     
     # only bought, but didnt sell
     else: 
@@ -36,10 +39,10 @@ def testOrder_reward(testOrder,df):
         reward+=testOrder.profit*10 # [-10..5]
     
     # estimates time in trade. Preferably be in trade less than 300 seconds
-    reward= reward + (1-time_in_trade/300)*5 # [-10,5]
+    reward += (1-time_in_trade/300)*5 # [-10,5]
     
     # find rewards out of bounds
-    if reward>=20:
+    if reward>=20 or reward<=-20:
         print(reward)
     return reward
 
