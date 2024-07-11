@@ -199,6 +199,5 @@ if __name__=="__main__":
     for i in range (len(dfs_aggregated)):
         dfs_aggregated[i].to_csv(output_path+str(i)+".csv", index=False)
 
-# TODO: 4July data download
-# TODO: external/aggTrades dvc, delete dvc
+# TODO: external/aggTrades dvc
 # TODO: first and last rows deleted manually, since have invalid values

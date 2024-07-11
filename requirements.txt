@@ -4,3 +4,6 @@ hydra-core
 dvc
 seaborn
 tensorboard
+websockets
+stable-baselines3
+gymnasium

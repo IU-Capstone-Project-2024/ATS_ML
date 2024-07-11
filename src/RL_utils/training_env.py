@@ -388,8 +388,8 @@ class KnifeEnv(gym.Env):
         self.action_space = spaces.Discrete(3)
         self.previous_action=0 # do nothing by default
         
-        self.low=np.array ([-1000,-1000,-1000,10]*self.window_size + [-1.5,0])
-        self.high=np.array([1000,  1000, 1000, 20000]*self.window_size+[1,2])
+        self.low=np.array ([-1000,-1000,-1000,10]*self.window_size +   [-3.5,0])
+        self.high=np.array([1000,  1000, 1000, 20000]*self.window_size+[2,2]) #TODO: change to 2.5
         
         # Previous observations * window_size (unix and Close dropped) + current profit + previous_action. Dimension: (4*20+2)x1
         self.observation_space = spaces.Box(
@@ -413,6 +413,7 @@ class KnifeEnv(gym.Env):
             self.df_count[self.df_id]+=1
         
         self.trades=[]
+        self.rewards=[]
         self.previous_action=0
         return self._next_observation(), {}
     
@@ -488,17 +489,17 @@ class KnifeEnv(gym.Env):
             
             # if action is do nothing and have opened trade   or just bought and trade is opened, return unrealized profit
             if (action==0 and current_trade.exit_price==None) or (action==1 and current_trade.entry_timestamp==current_timestamp):
-                reward=10*(calc_profit(current_trade.entry_price, current_price)-0.1)
+                reward=sum(testOrder_reward(testOrder, self.data[self.df_id], current_timestamp) for testOrder in self.trades)*pow(len(self.trades),0.5)
                 
-            # if action is to buy and have opened trade, when trade is opened not in current timestamp, return penalty. Penalty should be harder than profitloss
+            # if action is to buy and have opened trade, when trade is opened not in current timestamp, return penalty. Penalty should be harder than average loss
             elif action==1 and current_trade.exit_price==None and current_trade.entry_timestamp!=current_timestamp:
-                reward=-10
+                reward=-50
                 
-            # if action is to sell, when trade is closed in current step, return reward
+            # if action is to sell, when trade is closed in current step, return reward.
+            # Not closing trade with little loss may hurt harder than not closing till end 
             elif action==2 and current_trade.exit_price==current_price:
-                reward=testOrder_reward(current_trade, self.data[self.df_id])
+                reward=sum(testOrder_reward(testOrder, self.data[self.df_id], current_timestamp) for testOrder in self.trades)*pow(len(self.trades),0.5)
         
-
         # Penalties
         # if episode didnt end and not have opened trade
         elif not done and current_trade==None and action==0:
@@ -507,25 +508,24 @@ class KnifeEnv(gym.Env):
             else:
                 start_episode_timestamp=self.data[self.df_id]['unix'].iloc[self.episode_start]
                 time_since_last_trade=(current_timestamp-start_episode_timestamp)/1000
-
             # Gradually increase penalty
-            reward= (time_since_last_trade/1200)*(-10)
+            reward= (time_since_last_trade/1200)*(-50)
         
         # Sell, if not have opened trade
         elif current_trade==None and action==2:
-            reward=-10
+            reward=-50
 
         # Same action=(1,2) in row
         elif not done and self.previous_action==action and action!=0:
-            reward= -10
+            reward= -50
 
         # If episode end, return reward for all trades
         if done:
             # cumulative reward for all actions * amount actions
-            reward=sum(testOrder_reward(testOrder, self.data[self.df_id]) for testOrder in self.trades)*pow(len(self.trades),0.5)
-            # penalty for no trades = half of bad trade
+            reward=sum(testOrder_reward(testOrder, self.data[self.df_id], current_timestamp) for testOrder in self.trades)*pow(len(self.trades),0.5)
+            # penalty for no trades = bad episode
             if reward==0:
-                reward=-10
+                reward=-20
         
         self.rewards.append(reward)
         return reward

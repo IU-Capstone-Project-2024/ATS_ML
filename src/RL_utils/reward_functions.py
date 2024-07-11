@@ -1,4 +1,4 @@
-def testOrder_reward(testOrder,df):
+def testOrder_reward(testOrder,df, current_timestamp):
     # calculates reward for testOrder object
     reward=0
     
@@ -33,17 +33,14 @@ def testOrder_reward(testOrder,df):
     
     # only bought, but didnt sell
     else: 
-        time_in_trade=300 # neutral about time in trade
+        time_in_trade=(current_timestamp-testOrder.entry_timestamp)/1000
         
         # keep testOrder.profit= unrealized profit 
         reward+=testOrder.profit*10 # [-10..5]
     
-    # estimates time in trade. Preferably be in trade less than 300 seconds
-    reward += (1-time_in_trade/300)*5 # [-10,5]
+    # estimates time in trade. Preferably be in trade less than 600 seconds
+    reward += (1-time_in_trade/600)*5 # [-10,5]
     
-    # find rewards out of bounds
-    if reward>=20 or reward<=-20:
-        print(reward)
     return reward
 
 def calc_profit(entry_price, exit_price, fee=0.1):
