@@ -145,7 +145,11 @@ def get_dfs_aggregated(periods_unix, symbol='BTCUSDT',period='15s'):
         df_volume=aggregate_for_timeframe(df_klines,'Volume',period)
         df_volume_delta=aggregate_for_timeframe(df_klines,'Taker volume delta',period)
         df_aggtrades
-        df_grouped_trades = df_aggtrades.groupby('unix', group_keys=False).apply(lambda x: x.drop(columns='unix').to_dict('records')).reset_index()
+        grouped = df_aggtrades.groupby('unix')
+        grouped_trades = []
+        for unix, group in grouped:
+            grouped_trades.append({'unix': unix, 'records': group.drop(columns='unix').to_dict('records')})
+        df_grouped_trades = pd.DataFrame(grouped_trades)
         df_grouped_trades.columns = ['unix', 'trades']
         
         # Concatenate dataframes
@@ -181,10 +185,10 @@ if __name__=="__main__":
     for timestamp_unix in timestamps_unix:
         print(convert_unix_to_utc_plus_3(timestamp_unix[0]),convert_unix_to_utc_plus_3(timestamp_unix[1]))
     
-    # add 5 additional min after dump, to let model understand when to sell
+    # add 15 additional min after and before dump, to let model understand when to sell
     timestamps_unix_adjusted=[]
     for start_unix, end_unix in timestamps_unix:
-        timestamps_unix_adjusted.append((start_unix,end_unix+300000))
+        timestamps_unix_adjusted.append((start_unix-900_000,end_unix+900_000))
     
     dfs_aggregated=get_dfs_aggregated(timestamps_unix_adjusted)
     for df in dfs_aggregated:
@@ -192,8 +196,8 @@ if __name__=="__main__":
             if column!='unix':
                 print(column, max(df[column]),min(df[column]))
     
-    # first and last rows deleted manually, since have invalid values
-    # for i in range (len(dfs_aggregated)):
-    #     dfs_aggregated[i].to_csv(output_path+str(i)+".csv", index=False)
+    for i in range (len(dfs_aggregated)):
+        dfs_aggregated[i].to_csv(output_path+str(i)+".csv", index=False)
 
 # TODO: external/aggTrades dvc
+# TODO: first and last rows deleted manually, since have invalid values
