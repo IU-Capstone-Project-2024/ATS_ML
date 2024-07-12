@@ -53,13 +53,16 @@ def main():
 
             # Send the action to the endpoint
             # For now, we will just print the action
-            print(f"Action: {action}")
+            if cfg["receiver_endpoint"]:
+                pass
+            else:
+                print(f"Action: {action}")
 
             # Update the next prediction time
             next_prediction_time = np.ceil(time.time() / cfg["prediction_frequency"]) * cfg["prediction_frequency"]
 
         # Sleep for 1 second
-        time.sleep(1)
+        time.sleep(0.1)
             
     
 

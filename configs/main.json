@@ -1,0 +1,7 @@
+{
+    "model_path": "models/FinalPPO_20_80_trained.zip",
+    "observation_window": 20,
+    "observed_features": ["agg_Close_diff","agg_Volume_diff","agg_Taker volume delta_diff","amount_trades"],
+    "prediction_frequency": 15,
+    "receiver_endpoint": ""
+}
