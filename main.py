@@ -11,6 +11,7 @@ import os
 import matplotlib.pyplot as plt
 import time
 import json
+from src.easy_data_collection import get_last_data
 
 cfg = json.load(open("configs/main.json"))
 
@@ -18,8 +19,8 @@ cfg = json.load(open("configs/main.json"))
 def wrap_observations(observations, current_gain, holding_flag):
     # Wraps the observations in the format expected by the model 
 
-    if observations.shape != (cfg["observation_window"], len(cfg["observed_features"])):
-        raise ValueError(f"Expected observations to have shape {(cfg['observation_window'], len(cfg['observed_features']))} but got {observations.shape}")
+    if len(observations) != cfg["observation_window"]:
+        raise ValueError("The number of observations must be equal to the observation window")
 
     obs = observations[cfg["observed_features"]].values.flatten()
     obs = np.append(obs, [current_gain, holding_flag])
@@ -29,6 +30,9 @@ def wrap_observations(observations, current_gain, holding_flag):
 def main():
     # Load the model
     model = PPO.load(cfg["model_path"])
+    
+    current_gain = 0
+    holding_flag = 0
 
     # Define the next prediction time
     # Round the current time to the nearest 15 seconds
@@ -41,9 +45,7 @@ def main():
         # If the current time is greater than the next prediction time, make a prediction
         if current_time >= next_prediction_time:
             
-            observations = pd.DataFrame(columns=cfg["observed_features"], data=np.random.randn(cfg["observation_window"], len(cfg["observed_features"])))
-            current_gain = 0
-            holding_flag = 0
+            observations = get_last_data(5, "15s")
 
             # Wrap the observations
             obs = wrap_observations(observations, current_gain, holding_flag)
