@@ -68,7 +68,7 @@ def main():
         # If the current time is greater than the next prediction time, make a prediction
         if current_time >= next_prediction_time:
             
-            observations = get_last_data(5, "15s")
+            observations = get_last_data(int(cfg['observation_window']*cfg['prediction_frequency']/60), "15s")
 
             # Wrap the observations
             if cfg["strategy"] == "No strategy":
