@@ -14,6 +14,7 @@ import json
 from src.easy_data_collection import get_last_data
 from src.RL_utils.Order import TestOrder
 from src.RL_utils.reward_functions import calc_profit
+import zmq
 
 cfg = json.load(open("configs/main.json"))
 
@@ -33,7 +34,7 @@ def wrap_ordinary_observations(observations, last_trade: TestOrder):
     return obs
 
 
-def wrap_knife_observations(observations, last_trade: TestOrder, last_action: int):
+def wrap_knife_observations(observations, last_trade: TestOrder):
     # Wraps the observations in the format expected by the model 
 
     if len(observations) != cfg["observation_window"]:
@@ -43,9 +44,9 @@ def wrap_knife_observations(observations, last_trade: TestOrder, last_action: in
     current_price = observations["Close"].values[-1]
     if last_trade.exit_timestamp is not None:
         profitloss = calc_profit(last_trade.entry_price, current_price) - 0.1
-        obs = np.append(obs, [profitloss, last_action])
+        obs = np.append(obs, [profitloss, last_trade.last_action])
     else:
-        obs = np.append(obs, [0, last_action])
+        obs = np.append(obs, [0, last_trade.last_action])
 
     return obs
 
@@ -55,7 +56,11 @@ def main():
     model = PPO.load(cfg["model_path"])
     
     last_trade = TestOrder("BTCUSD", None, None, None, cfg["strategy"])
-    last_action = 0
+
+    if cfg["receiver_endpoint"]:
+        context = zmq.Context()
+        socket = context.socket(zmq.REQ)
+        socket.connect(cfg["receiver_endpoint"])
 
     # Define the next prediction time
     # Round the current time to the nearest 15 seconds
@@ -74,25 +79,30 @@ def main():
             if cfg["strategy"] == "No strategy":
                 obs = wrap_ordinary_observations(observations, last_trade)
             elif cfg["strategy"] == "Knife":
-                obs = wrap_knife_observations(observations, last_trade, last_action)
+                obs = wrap_knife_observations(observations, last_trade)
 
             # Make a prediction
-            last_action, _ = model.predict(obs, deterministic=True)
+            action, _ = model.predict(obs, deterministic=True)
 
             # Save the last trade
-            if last_action == 1:
+            if action == 1:
                 last_trade = TestOrder("BTCUSD", observations["Close"].values[-1], observations["unix"].values[-1], "15s", cfg["strategy"])
-            elif last_action == 2:
+            elif action == 2:
                 last_trade.exit_price = observations["Close"].values[-1]
                 last_trade.exit_timestamp = observations["unix"].values[-1]
                 last_trade.profit = calc_profit(last_trade.entry_price, last_trade.exit_price) - 0.1
+            
+            last_trade.last_action = action
 
             # Send the action to the endpoint
             # For now, we will just print the action
             if cfg["receiver_endpoint"]:
-                pass
+                # Send last_trade to endpoint
+                socket.send_json(last_trade.__dict__)
+                response = socket.recv()
+                print(f"Action: {last_trade.last_action}, Response: {response}")
             else:
-                print(f"Action: {last_action}")
+                print(f"Action: {last_trade.last_action}")
 
             # Update the next prediction time
             next_prediction_time = np.ceil(time.time() / cfg["prediction_frequency"]) * cfg["prediction_frequency"]

@@ -5,6 +5,7 @@ class TestOrder:
         self.entry_timestamp=entry_timestamp
         self.period=period
         self.strategy=strategy
+        self.last_action = 0
         
         self.exit_timestamp=None
         self.exit_price=None
