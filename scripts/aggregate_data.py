@@ -132,7 +132,7 @@ def get_dfs_aggregated(periods_unix, symbol='BTCUSDT',period='15s', agg_trades_s
     directory=os.path.join(script_dir, '..', 'data', 'external', 'aggtrades')
     
     files=get_all_file_names(directory)
-    dfs_dump_aggregated=[]
+    dfs_aggregated=[]
     for period_unix in periods_unix:
         # for specified period, aggregate all data
         
@@ -173,21 +173,22 @@ def get_dfs_aggregated(periods_unix, symbol='BTCUSDT',period='15s', agg_trades_s
         
         # Concatenate dataframes
         dfs+=[df_close,df_volume,df_volume_delta]
-        df_dump_aggregated = reduce(merge_dfs, dfs)
+        df_aggregated = reduce(merge_dfs, dfs)
         
-        df_dump_aggregated=preprocess_aggregated_df(df_dump_aggregated)
+        df_aggregated=preprocess_aggregated_df(df_aggregated)
         
         # change columns order
         column_order = ['unix', 'agg_Taker volume delta', 'Close', 'agg_Close_diff', 'agg_Volume_diff', 'agg_amount trades']
-        df_dump_aggregated=df_dump_aggregated.reindex(columns=column_order)
+        df_aggregated=df_aggregated.reindex(columns=column_order)
         
         # delete first and last rows since have invalid values
-        df_dump_aggregated=df_dump_aggregated.drop(df_dump_aggregated.index[[0,-1]])
-        dfs_dump_aggregated.append(df_dump_aggregated)
+        df_aggregated=df_aggregated.drop(df_aggregated.index[[0,-1]])
+        dfs_aggregated.append(df_aggregated)
         
-    return dfs_dump_aggregated
+    return dfs_aggregated
 
-# historical 1s:
+# Possible ways for data collection:
+# historical 1s (used):
 # spot trades
 # price change% spot
 # Volume change% spot
@@ -201,8 +202,8 @@ def get_dfs_aggregated(periods_unix, symbol='BTCUSDT',period='15s', agg_trades_s
 # everything is available. Save data to local, for further improvement.
 # Stakan plotnost bool spot+futures, round numbers bool
 
-# get aggregated data for dumps intervals from 1s periods
 if __name__=="__main__":
+    # get aggregated data for dumps intervals from 1s periods
     output_path="data/raw/dumps_aggregated"
     timestamps_unix = find_dump_intervals()
     
@@ -225,5 +226,4 @@ if __name__=="__main__":
         dfs_aggregated[i].to_csv(output_path+str(i)+".csv", index=False)
 
 # TODO: external/aggTrades dvc
-# TODO: devide code into smaller functions
-# run 'python -m scripts.aggregate_data' 
+# run 'python -m scripts.aggregate_data' to save dumps intervals into data/raw
