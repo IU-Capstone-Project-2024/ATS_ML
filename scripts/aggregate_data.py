@@ -3,8 +3,6 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 from functools import reduce
 from src.data.scraping.get_historical_binance_data import get_full_klines_spot, get_full_aggtrades_spot
-from scripts.find_dumps import find_dump_intervals
-from scripts.find_dumps import convert_unix_to_utc_plus_3
 
 def get_all_file_names(directory):
     all_files = os.listdir(directory)
@@ -201,29 +199,3 @@ def get_dfs_aggregated(periods_unix, symbol='BTCUSDT',period='15s', agg_trades_s
 # realtime:
 # everything is available. Save data to local, for further improvement.
 # Stakan plotnost bool spot+futures, round numbers bool
-
-if __name__=="__main__":
-    # get aggregated data for dumps intervals from 1s periods
-    output_path="data/raw/dumps_aggregated"
-    timestamps_unix = find_dump_intervals()
-    
-    print("dumps period")
-    for timestamp_unix in timestamps_unix:
-        print(convert_unix_to_utc_plus_3(timestamp_unix[0]),convert_unix_to_utc_plus_3(timestamp_unix[1]))
-    
-    # add 15 additional min after and before dump, to let model understand when to sell
-    timestamps_unix_adjusted=[]
-    for start_unix, end_unix in timestamps_unix:
-        timestamps_unix_adjusted.append((start_unix-900_000,end_unix+900_000))
-    
-    dfs_aggregated=get_dfs_aggregated(timestamps_unix_adjusted)
-    for df in dfs_aggregated:
-        for column in df.columns:
-            if column!='unix':
-                print(column, max(df[column]),min(df[column]))
-    
-    for i in range (len(dfs_aggregated)):
-        dfs_aggregated[i].to_csv(output_path+str(i)+".csv", index=False)
-
-# TODO: external/aggTrades dvc
-# run 'python -m scripts.aggregate_data' to save dumps intervals into data/raw
