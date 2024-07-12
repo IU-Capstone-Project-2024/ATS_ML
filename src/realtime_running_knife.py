@@ -20,3 +20,5 @@ obs, _ = test_env.reset()
 print(obs.shape)
 action, _states = model.predict(obs)
 print(action)
+
+# dont work for realtime
