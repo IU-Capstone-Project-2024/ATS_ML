@@ -210,7 +210,7 @@ def get_few_aggregated_spot_trades(symbol, start_time, end_time):
     else:
         raise Exception(f"Error fetching data: {response.status_code} - {response.text}")
     
-def get_full_aggregated_spot_trades(symbol,start_time,end_time):
+def get_full_aggtrades_spot(symbol,start_time,end_time):
     full_trades=[]
     unix_traveler=start_time
     while unix_traveler<end_time:
