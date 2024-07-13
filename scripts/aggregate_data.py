@@ -1,14 +1,8 @@
-import sys
 import os
 from datetime import datetime, timedelta, timezone
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.insert(0, root_dir)
-
 import pandas as pd
 from functools import reduce
-from src.data.scraping.get_historical_binance_data import get_full_klines_spot
-from scripts.find_dumps import find_dump_intervals
-from scripts.find_dumps import convert_unix_to_utc_plus_3
+from src.data.scraping.get_historical_binance_data import get_full_klines_spot, get_full_aggtrades_spot
 
 def get_all_file_names(directory):
     all_files = os.listdir(directory)
@@ -69,7 +63,7 @@ def preprocess_aggregated_df(df):
             
     if 'trades' in df.columns:
         df['amount_trades'] = df['trades'].apply(lambda x: len(x) if isinstance(x, list) else 0)
-    df=df.drop('trades', axis=1)
+        df=df.drop('trades', axis=1)
     return df
 
 def create_bin(df, bin_column_name, period):
@@ -89,76 +83,110 @@ def create_bin(df, bin_column_name, period):
 def merge_dfs(left, right):
     return pd.merge(left, right, on='unix', how='outer')
 
-def get_dfs_aggregated(periods_unix, symbol='BTCUSDT',period='15s'):
+def get_aggtrades_from_files(period_unix, files, directory):
+    # search among files taken from binance website. 
+    # If use api, too long to wait. 
+    # Files contain aggtrades for specific day.
+    
+    df_aggtrades = pd.DataFrame()
+    aggTrades_file_found=False
+    # for every learning period, find .csv file with trades
+    for file in files:
+        file_path = os.path.join(directory, file)
+        df_aggtrades=pd.read_csv(file_path)
+        df_aggtrades.columns=['id', 'price','quantity','firstid','lastid','unix','takersell','pricechanged']
+        df_aggtrades=df_aggtrades[['price','quantity','unix','takersell','pricechanged']]
+        
+        start_day_unix=df_aggtrades['unix'].iat[0]
+        end_day_unix=df_aggtrades['unix'].iat[-1]
+        
+        if start_day_unix//1000<=period_unix[0]//1000<=end_day_unix//1000 and start_day_unix//1000<=period_unix[1]//1000<=end_day_unix//1000:
+            # corresponding dump period found
+            df_aggtrades=df_aggtrades[(df_aggtrades['unix'] >= period_unix[0]) & (df_aggtrades['unix'] <= period_unix[1])]
+            # print(len(df_aggtrades_dump)/len(df_aggtrades))
+            aggTrades_file_found=True
+            break
+        
+    if not aggTrades_file_found:
+        print ("No data found for some interval. Download data from https://www.binance.com/en-NG/landing/data") 
+    
+    return df_aggtrades
+
+def make_klines_df(klines_spot_raw):
+    df_klines = pd.DataFrame(klines_spot_raw, columns=['unix', 'Open', 'High', 'Low', 'Close', 'Volume', 
+    'Close time', 'Quote asset volume', 'amount trades', 
+    'Taker buy base asset volume', 'Taker buy quote asset volume', 'Ignore'])
+    
+    numeric_cols = ['Open', 'High', 'Low', 'Close', 'Volume', 'Quote asset volume', 'Taker buy base asset volume', 'Taker buy quote asset volume']
+    df_klines[numeric_cols] = df_klines[numeric_cols].apply(pd.to_numeric)
+    
+    return df_klines
+
+def get_dfs_aggregated(periods_unix, symbol='BTCUSDT',period='15s', agg_trades_source='files'):
+    # agg_trades_source = 'files' OR 'api' OR 'klines'. 
+    # Use 'files' on historical (yesterday and further), use 'restapi' when executing realtime, use klines, when care only about # of trades.
+    
     script_dir = os.path.dirname(__file__)
     directory=os.path.join(script_dir, '..', 'data', 'external', 'aggtrades')
-   
-    files=get_all_file_names(directory)
-    print("training periods:")
-    for period_unix in periods_unix:
-        print(convert_unix_to_utc_plus_3(period_unix[0]),convert_unix_to_utc_plus_3(period_unix[1]))
     
-    dfs_dump_aggregated=[]
+    files=get_all_file_names(directory)
+    dfs_aggregated=[]
     for period_unix in periods_unix:
         # for specified period, aggregate all data
         
-        # aggTrades
-        # taken from binance website. If use api, too long to wait. Files contain aggtrades for specific day
-        df_aggtrades = pd.DataFrame()
-        aggTrades_file_found=False
-        # for every learning period, find .csv file with trades
-        for file in files:
-            file_path = os.path.join(directory, file)
-            df_aggtrades=pd.read_csv(file_path)
-            df_aggtrades.columns=['id', 'price','quantity','firstid','lastid','unix','takersell','pricechanged']
-            df_aggtrades=df_aggtrades[['price','quantity','unix','takersell','pricechanged']]
-            
-            start_day_unix=df_aggtrades['unix'].iat[0]
-            end_day_unix=df_aggtrades['unix'].iat[-1]
-            
-            if start_day_unix//1000<=period_unix[0]//1000<=end_day_unix//1000 and start_day_unix//1000<=period_unix[1]//1000<=end_day_unix//1000:
-                # corresponding dump period found
-                df_aggtrades=df_aggtrades[(df_aggtrades['unix'] >= period_unix[0]) & (df_aggtrades['unix'] <= period_unix[1])]
-                # print(len(df_aggtrades_dump)/len(df_aggtrades))
-                aggTrades_file_found=True
-                break
-            
-        if not aggTrades_file_found:
-            print ("No data found for some interval. Download data from https://www.binance.com/en-NG/landing/data")
-            continue
-        df_aggtrades=create_bin(df_aggtrades,'unix',period)
+        # aggTrades contains rows with every trade
+        if agg_trades_source=='files':
+            df_aggtrades=get_aggtrades_from_files(period_unix,files,directory)
+        elif agg_trades_source=='restapi':
+            df_aggtrades=get_full_aggtrades_spot(symbol,period_unix[0],period_unix[1])
+        elif agg_trades_source=='klines':
+            pass # data is collected later
         
         # spot delta change%, volume change%, price change% by second
         klines_spot=get_full_klines_spot(symbol,'1s',period_unix[0],period_unix[1])
-        df_klines = pd.DataFrame(klines_spot, columns=['unix', 'Open', 'High', 'Low', 'Close', 'Volume', 
-        'Close time', 'Quote asset volume', 'Number of trades', 
-        'Taker buy base asset volume', 'Taker buy quote asset volume', 'Ignore'])
+        df_klines=make_klines_df(klines_spot)
         
-        numeric_cols = ['Open', 'High', 'Low', 'Close', 'Volume', 'Quote asset volume', 'Taker buy base asset volume', 'Taker buy quote asset volume']
-        df_klines[numeric_cols] = df_klines[numeric_cols].apply(pd.to_numeric)
-            
+        # create column Taker volume delta. This is a volume of taker buys of coin - volume of  taker sell of a coin
+        # helps understand, when spikes of stoplosses are happening
         df_klines['Taker sell base asset volume'] = df_klines['Volume']-df_klines['Taker buy base asset volume']
         df_klines['Taker volume delta']=df_klines['Taker buy base asset volume']-df_klines['Taker sell base asset volume']
         
-        # all available data
+        # aggregate data in asked period
         df_close=aggregate_for_timeframe(df_klines,'Close',period)
         df_volume=aggregate_for_timeframe(df_klines,'Volume',period)
         df_volume_delta=aggregate_for_timeframe(df_klines,'Taker volume delta',period)
-        df_aggtrades
-        df_grouped_trades = df_aggtrades.groupby('unix', group_keys=False).apply(lambda x: x.drop(columns='unix').to_dict('records')).reset_index()
-        df_grouped_trades.columns = ['unix', 'trades']
+        df_amount_trades=aggregate_for_timeframe(df_klines,'amount trades', period)
+        
+        if agg_trades_source=='restapi' or agg_trades_source=='files':
+            df_aggtrades=create_bin(df_aggtrades,'unix',period)
+            grouped = df_aggtrades.groupby('unix')
+            grouped_trades = []
+            for unix, group in grouped:
+                grouped_trades.append({'unix': unix, 'records': group.drop(columns='unix').to_dict('records')})
+            df_grouped_trades = pd.DataFrame(grouped_trades)
+            df_grouped_trades.columns = ['unix', 'trades']
+            dfs=[df_grouped_trades]
+        elif agg_trades_source=='klines':
+            dfs=[df_amount_trades]
         
         # Concatenate dataframes
-        dfs=[df_close,df_volume,df_volume_delta,df_grouped_trades]
-        df_dump_aggregated = reduce(merge_dfs, dfs)
+        dfs+=[df_close,df_volume,df_volume_delta]
+        df_aggregated = reduce(merge_dfs, dfs)
         
-        df_dump_aggregated=preprocess_aggregated_df(df_dump_aggregated)
+        df_aggregated=preprocess_aggregated_df(df_aggregated)
         
-        dfs_dump_aggregated.append(df_dump_aggregated)
+        # change columns order
+        column_order = ['unix', 'agg_Taker volume delta', 'Close', 'agg_Close_diff', 'agg_Volume_diff', 'agg_amount trades']
+        df_aggregated=df_aggregated.reindex(columns=column_order)
         
-    return dfs_dump_aggregated
+        # delete first and last rows since have invalid values
+        df_aggregated=df_aggregated.drop(df_aggregated.index[[0,-1]])
+        dfs_aggregated.append(df_aggregated)
+        
+    return dfs_aggregated
 
-# historical 1s:
+# Possible ways for data collection:
+# historical 1s (used):
 # spot trades
 # price change% spot
 # Volume change% spot
@@ -171,29 +199,3 @@ def get_dfs_aggregated(periods_unix, symbol='BTCUSDT',period='15s'):
 # realtime:
 # everything is available. Save data to local, for further improvement.
 # Stakan plotnost bool spot+futures, round numbers bool
-
-# get aggregated data for dumps intervals from 1s periods
-if __name__=="__main__":
-    output_path="data/raw/dumps_aggregated"
-    timestamps_unix = find_dump_intervals()
-    
-    print("dumps period")
-    for timestamp_unix in timestamps_unix:
-        print(convert_unix_to_utc_plus_3(timestamp_unix[0]),convert_unix_to_utc_plus_3(timestamp_unix[1]))
-    
-    # add 5 additional min after dump, to let model understand when to sell
-    timestamps_unix_adjusted=[]
-    for start_unix, end_unix in timestamps_unix:
-        timestamps_unix_adjusted.append((start_unix,end_unix+300000))
-    
-    dfs_aggregated=get_dfs_aggregated(timestamps_unix_adjusted)
-    for df in dfs_aggregated:
-        for column in df.columns:
-            if column!='unix':
-                print(column, max(df[column]),min(df[column]))
-    
-    # first and last rows deleted manually, since have invalid values
-    # for i in range (len(dfs_aggregated)):
-    #     dfs_aggregated[i].to_csv(output_path+str(i)+".csv", index=False)
-
-# TODO: external/aggTrades dvc

@@ -8,139 +8,6 @@ from .reward_functions import calc_profit
 from typing import List
 from RL_utils.data_handling import EpisodeManager
 
-class TrainEnv(gym.Env):
-    
-    def __init__(self, data, window_size, training_period=1000, transaction_cost_pct=0.001, test_mode=False, balance=10000, tokens_held=0):
-        super(TrainEnv, self).__init__()
-        
-        # Initialize parameters
-        self.test_mode = test_mode
-        self.data = data
-        self.window_size = window_size
-        self.transaction_cost_pct = transaction_cost_pct
-        # traveler index of row in dataframe. first is random
-        self.current_step = np.random.randint(self.window_size, len(self.data) - 2) if not self.test_mode else window_size
-        self.balance = 10000
-        self.tokens_held = 0
-        self.total_transactions = 0
-        self.training_period = training_period  # how many rows to see
-        self.last_time_step = min(self.current_step + self.training_period, len(self.data) - 2) if not self.test_mode else len(self.data) - 2
-        self.action_rule_violation = False # model should take action, but dont have needed asset
-        # Used for calculating one potential best trade
-        self.min_observed_price = np.inf # price to buy
-        self.min_observed_price_temp = np.inf # while price decline, save potential buy price
-        self.max_observed_price = -np.inf # price to sell
-        self.bought = np.inf # to calculate reward selling price / buying price
-
-        # Define action and observation space
-        self.action_space = spaces.Discrete(3) # 0: Hold, 1: Buy, 2: Sell
-
-        # TODO: fix, if flatten applied
-        self.observation_space = spaces.Box(
-            low=-np.inf, high=np.inf, 
-            shape=(window_size, len(data.iloc[0]) - 2), 
-            dtype=np.float32
-        )
-
-        # Initialize past actions tracker
-        self.past_actions = [] # (timestamp, action, price, balance, tokens_held)
-
-    def reset(self, seed=None):
-        self.current_step = np.random.randint(self.window_size, len(self.data) - 2) if not self.test_mode else self.window_size
-        self.balance = 10000
-        self.tokens_held = 0
-        self.total_transactions = 0
-        self.last_time_step = min(self.current_step + self.training_period, len(self.data) - 2) if not self.test_mode else len(self.data) - 2
-        self.past_actions = []
-        self.action_rule_violation = False
-        self.min_observed_price = np.inf
-        self.min_observed_price_temp = np.inf 
-        self.max_observed_price = -np.inf
-        self.bought = np.inf
-
-        return self._next_observation(), {}
-    
-    def step(self, action):
-        self.action_rule_violation = False
-        self._take_action(action)
-        self.current_step += 1
-
-        if self.current_step >= self.last_time_step:
-            # traveled until end
-            done = True
-        else:
-            done = False
-
-        return self._next_observation(), self._get_reward(), done, False, {}
-    
-    def _next_observation(self):
-        # get next timestamp data + window_size previous
-        frame = self.data.iloc[self.current_step - self.window_size + 1:self.current_step + 1]
-        # converting to numpy array and drop price and timestamps
-        obs = frame.values[:, 2:]
-        return obs
-
-    def _take_action(self, action):
-        current_price = self.data['Close'].iloc[self.current_step]
-        timestamp = self.data['unix'].iloc[self.current_step]
-        
-        # update potential best trade
-        # if current_price > self.max_observed_price:
-        #     self.max_observed_price = current_price
-        #     self.min_observed_price = self.min_observed_price_temp
-        # still searching for best entry
-        # elif current_price < self.min_observed_price_temp:
-        #     self.min_observed_price_temp = current_price
-
-        
-        if action == 1: # Buy
-            if self.balance > 0:
-                tokens_bought = self.balance / current_price * (1 - self.transaction_cost_pct)
-                self.tokens_held = tokens_bought
-                self.balance = 0
-                self.total_transactions += 1
-                self.past_actions.append((timestamp, 'Buy', current_price, self.balance, self.tokens_held))
-            else:
-                # already bought
-                self.action_rule_violation = True
-            self.bought = self.data['Close'].iloc[self.current_step]
-        elif action == 2: # Sell
-            if self.tokens_held > 0:
-                self.balance = self.tokens_held * current_price * (1 - self.transaction_cost_pct)
-                self.tokens_held = 0
-                self.total_transactions += 1
-                self.past_actions.append((timestamp, 'Sell', current_price, self.balance, self.tokens_held))
-            else:
-                # nothing to sell
-                self.action_rule_violation = True
-        else: # Hold
-            self.past_actions.append((timestamp, 'Hold', current_price, self.balance, self.tokens_held))
-
-    def _get_reward(self):
-        current_price = self.data['Close'].iloc[self.current_step]
-        next_price = self.data['Close'].iloc[self.current_step + 1]
-        reward = 0
-        if self.balance > 0:
-            # if we sold all tokens, we lost potential profit
-            lost_profit = next_price / current_price - 1
-            reward -= lost_profit
-        elif self.tokens_held > 0:
-            # if we hold tokens, we gain potential profit or loss
-            observed_profit = next_price / current_price - 1
-            reward += observed_profit
-
-
-        reward -= self.action_rule_violation
-        if self.past_actions and self.past_actions[-1][1] == 'Buy':
-            reward += current_price / self.bought - 1
-        return reward
-    
-    def render(self):
-        print(f'Step: {self.current_step}, Balance: {self.balance}, Tokens held: {self.tokens_held}, Total transactions: {self.total_transactions}, Min price: {self.min_observed_price}, Max price: {self.max_observed_price}, Action rule violation: {self.action_rule_violation}')
-        print(f'Past actions: {self.past_actions}')
-        print('')
-
-
 
 class SparseTrainEnv(gym.Env):
     """
@@ -177,6 +44,24 @@ class SparseTrainEnv(gym.Env):
         self.episode_length = episode_length
         self.episod_temp = episod_temp
 
+        # Reward parameters
+        self.short_distance_weight=-1.8 # c
+        self.long_distance_weight=0.1 # a
+        self.least_penalized_distance=10 # x_min
+        self.min_penalty_scale = 1 # b
+
+        self.zero_distance_penalty = self.calculate_zero_distance_penalty()       
+
+        
+        self.distance_weight_diff = self.long_distance_weight - self.short_distance_weight
+        self.distance_weight_sum = self.long_distance_weight + self.short_distance_weight
+        self.distance_const_diff = self.min_penalty_scale - self.zero_distance_penalty
+        self.distance_const_sum = self.min_penalty_scale + self.zero_distance_penalty 
+
+        self.transaction_time_penalty = 0.3
+        self.transaction_time_const = -0.6
+
+
         # Initialize the current dataframe and step
         if not self.test_mode:
             self.df_id, self.episode_start = self.episode_manager.select_episode(temperature=self.episod_temp)
@@ -192,8 +77,14 @@ class SparseTrainEnv(gym.Env):
         self.transaction_cost_pct = transaction_cost_pct
         self.balance = 10000 # Initial balance
         self.entering_balance = 10000 # Initial balance
+        self.entering_price = self.data[self.df_id]['Close'].iloc[self.current_step] # Price at which the tokens were bought
+        self.entering_step = self.current_step # Step at which the episode started
+        self.exit_balance = 10000 # Balance after selling the tokens
+        self.exit_price = self.data[self.df_id]['Close'].iloc[self.current_step]  # Price at which the tokens were sold
+        self.exit_step = self.current_step # Step at which the tokens were sold
         self.tokens_held = 0 # Number of tokens held
         self.total_transactions = 0 # Total number of transactions
+        self.last_transaction_step = None # Step at which the last transaction was made
         self.past_actions = [] # List of past actions taken
         self.cumulative_reward = 0 # Total reward over the episode
         self.action_rule_violation = False # Flag indicating whether an action rule was violated (e.g., buying without sufficient balance)
@@ -228,8 +119,14 @@ class SparseTrainEnv(gym.Env):
         
         self.balance = 10000
         self.entering_balance = 10000
+        self.entering_price = self.data[self.df_id]['Close'].iloc[self.current_step]
+        self.entering_step = self.current_step
+        self.exit_balance = 10000
+        self.exit_price = self.data[self.df_id]['Close'].iloc[self.current_step]
+        self.exit_step = self.current_step
         self.tokens_held = 0
         self.total_transactions = 0
+        self.last_transaction_step = None
         self.past_actions = []
         self.cumulative_reward = 0
         self.action_rule_violation = False
@@ -257,10 +154,10 @@ class SparseTrainEnv(gym.Env):
         done = self.current_step >= self.last_time_step
 
         reward = self._get_reward(done)
+        self.cumulative_reward += reward
         # Update the episode statistics if the episode is done
         if done:
             self.episode_manager.update_stats(self.df_id, self.episode_start, reward)
-        self.cumulative_reward += reward
 
         return self._next_observation(), reward, done, False, {}
     
@@ -274,8 +171,10 @@ class SparseTrainEnv(gym.Env):
         frame = self.data[self.df_id].iloc[self.current_step - self.window_size + 1:self.current_step + 1]
         current_price = self.data[self.df_id]['Close'].iloc[self.current_step]
         obs = frame.values[:, 2:].flatten()
-        current_profit = self.balance + self.tokens_held * current_price
-        current_profit = (current_profit / 10000 - 1)
+        if self.tokens_held > 0:
+            current_profit = (current_price / self.data[self.df_id]['Close'].iloc[self.entering_step] - 1) * 100
+        else:
+            current_profit = 0
         obs = np.append(obs, [current_profit, self.tokens_held > 0]) # Previous observations + current profit + holding flag
 
         if current_price < self.min_observed_price:
@@ -298,6 +197,8 @@ class SparseTrainEnv(gym.Env):
         if action == 1:  # Buy
             if self.balance > 0:
                 self.entering_balance = self.balance
+                self.entering_price = current_price 
+                self.entering_step = self.current_step
                 tokens_bought = self.balance / current_price * (1 - self.transaction_cost_pct)
                 self.tokens_held = tokens_bought
                 self.balance = 0
@@ -309,6 +210,9 @@ class SparseTrainEnv(gym.Env):
         elif action == 2:  # Sell
             if self.tokens_held > 0:
                 self.balance = self.tokens_held * current_price * (1 - self.transaction_cost_pct)
+                self.exit_balance = self.balance
+                self.exit_price = current_price
+                self.exit_step = self.current_step
                 self.tokens_held = 0
                 self.total_transactions += 1
                 self.past_actions.append((timestamp, 'Sell', current_price, self.balance, self.tokens_held))
@@ -328,17 +232,83 @@ class SparseTrainEnv(gym.Env):
         Returns:
         - reward (float): The reward for the current state.
         """
-        if done:
-            final_net_worth = self.balance + self.tokens_held * self.data[self.df_id]['Close'].iloc[self.current_step]
-            reward = (final_net_worth / 10000 - 1) * 100  # Total net worth as a percentage gain
-            reward -= self.max_price_gap * 100 # Use the maximum price gap as a baseline for the reward
 
-        elif self.past_actions and self.past_actions[-1][1] == 'Sell':
-            reward = (self.balance / self.entering_balance - 1) * 100  # Profit as a percentage gain
+        current_price = self.data[self.df_id]['Close'].iloc[self.current_step]
+        if done:
+            final_net_worth = self.balance + self.tokens_held * current_price
+            reward = (final_net_worth / 10000 - 1) * 100  # Total profit for the episode as a percentage gain
+            reward -= self.max_price_gap * 100 # Use the maximum observed price gap as a baseline for the reward
+        elif self.current_step == self.exit_step: # Just sold the tokens
+            reward = (self.exit_balance / self.entering_balance - 1) * 100  # Profit for the closed trade as a percentage gain
+            if self.last_transaction_step is not None:
+                time_since_last_transaction = self.current_step - self.last_transaction_step
+                reward += self._calculate_transaction_time_penalty(time_since_last_transaction)
+            self.last_transaction_step = self.current_step
+        elif self.current_step == self.entering_step: # Just bought the tokens
+            reward = 0  # No reward for buying
+            if self.last_transaction_step is not None:
+                time_since_last_transaction = self.current_step - self.last_transaction_step
+                reward += self._calculate_transaction_time_penalty(time_since_last_transaction)
+        elif self.tokens_held > 0 and self.current_step > self.entering_step: # Holding the tokens
+            running_gain = (current_price / self.entering_price - 1) * 100 # Running profit from open trade as a percentage gain
+            steps_distance = self.current_step - self.entering_step # Number of steps since the trade was opened
+            distance_multiplier = self._distance_penalty_multiplier(steps_distance)
+            reward = running_gain * distance_multiplier # Running profit adjusted by the distance penalty
+        elif self.balance > 0 and self.current_step > self.exit_step: # Sold tokens some time ago
+            regret = -(current_price / self.exit_price - 1) * 100 # Regret for not holding the tokens as a percentage loss
+            steps_distance = self.current_step - self.exit_step # Number of steps since the trade was closed
+            distance_multiplier = self._distance_penalty_multiplier(steps_distance)
+            reward = regret * distance_multiplier # Regret adjusted by the distance penalty
         else:
             reward = 0  # Intermediate steps do not contribute to the reward directly
         reward -= self.action_rule_violation
         return reward
+    
+    def calculate_zero_distance_penalty(self):
+        """
+        Calculate the penalty for zero distance (d)
+        """
+        ### d = b + x_min(a - c) + sqrt(-ac(a + c)^2) / ac
+        distance_weight_diff = self.long_distance_weight - self.short_distance_weight
+        distance_weight_sum = self.long_distance_weight + self.short_distance_weight
+        distance_weight_product = self.long_distance_weight * self.short_distance_weight
+        zero_distance_penalty = self.min_penalty_scale + self.least_penalized_distance * distance_weight_diff
+        zero_distance_penalty += np.sqrt(-distance_weight_product * np.square(distance_weight_sum)) / distance_weight_product
+        return zero_distance_penalty
+
+
+    
+    def _distance_penalty_multiplier(self, distance):
+        """
+        This function uses hyperbolic function to calculate the penalty multiplier for reward.
+        Hyperbolic function is represented as (y - ax - b)(y - cx - d) = 1
+        y = distance_penalty_multiplier
+
+        y - ax - b is a long distance penalty scaling asymptote. Used to penalize the agent for long inactive periods.
+        y - cx - d is a short distance penalty scaling asymptote. Used to penalize the agent for localy non-optimal actions.
+        
+        To calculate y we use the following formula:
+        
+        y = 1/2 * ((a + c)x + (b + d) + sqrt(((a - c)x + (b - d))^2 + 4)"""
+        distance_penalty_multiplier = ((self.distance_weight_sum * distance) + self.distance_const_sum)
+        distance_penalty_multiplier += np.sqrt(np.square(self.distance_weight_diff * distance + self.distance_const_diff) + 4)
+        distance_penalty_multiplier /= 2
+        return distance_penalty_multiplier
+    
+    def _calculate_transaction_time_penalty(self, elapsed_time):
+        """
+        Calculate the penalty for transaction time.
+        This function uses hyperbolic function to calculate the penalty multiplier for reward.
+        One asymptote y = 0
+        Second asymptote y = ax + b
+
+        Penalty is calculated as:
+        y = 1/2 * (ax + b - sqrt((ax + b)^2 + 4))"""
+        transaction_time_penalty = self.transaction_time_const + self.transaction_time_penalty * elapsed_time
+        transaction_time_penalty -= np.sqrt(np.square(self.transaction_time_penalty * elapsed_time + self.transaction_time_const) + 4)
+        transaction_time_penalty /= 2
+        return transaction_time_penalty
+
     
 def print_step(self):
         df_stats = self.episode_manager.stats
@@ -349,60 +319,98 @@ def print_step(self):
         
 
 class KnifeEnv(gym.Env):
-    def __init__(self, data, window_size, test_mode=False):
+    # specified environment for training in high volatility periods
+    def __init__(self, 
+            data: List[pd.DataFrame], 
+            window_size, 
+            episode_length=1000, 
+            observation_window=10,
+            episode_step=20, 
+            episode_temp=1,
+            test_mode=False
+            ):
         super(KnifeEnv, self).__init__()
         # training parameters
-        self.data=data
-        self.window_size=window_size # how many previous rows to show to agent
-        self.test_mode=test_mode
-        self.episode_length=2*self.window_size if not test_mode else len(self.data)-self.window_size # how many next rows to show to agent, full on testing
-        self.current_step = np.random.randint(self.episode_length, len(self.data) - 2) if not test_mode else 0
-        self.last_step = self.current_step+self.episode_length if not test_mode else len(self.data)-2
+        self.test_mode = test_mode
+        self.data = data # list of df
+        self.episode_manager = EpisodeManager(dataframes=data, left_indent=window_size, right_indent=2, episod_step=episode_step, observation_window=observation_window)
+        self.window_size = window_size # how many previous rows to show to agent
+        self.episode_length = episode_length
+        self.episode_temp = episode_temp
+        
+        # Initialize the current dataframe and step
+        self.df_count=[0 for _ in range (len(self.data))]
+        if not self.test_mode:
+            self.df_id, self.episode_start = self.episode_manager.select_episode(temperature=self.episode_temp)
+            self.current_step = self.episode_start
+            self.last_step = min(self.current_step + self.episode_length, len(self.data[self.df_id]) - 2)
+            self.df_count[self.df_id]+=1
+        else:
+            self.df_id = self.episode_manager.select_dataframe(temperature=self.episode_temp)
+            self.episode_start = self.window_size
+            self.current_step = self.episode_start
+            self.last_step = len(self.data[self.df_id]) - 2
+            self.df_count[self.df_id]+=1
         
         # environment parameters 
         self.trades=[]
         self.rewards=[]
         self.action_space = spaces.Discrete(3)
         self.previous_action=0 # do nothing by default
-        self.low=np.array ([-1000,-1000,-1000,10]*self.window_size + [-1.3,0])
-        self.high=np.array([1000,  1000, 1000, 20000]*self.window_size+[1,2])
+        
+        self.low=np.array ([-1000,-1000,-1000,10]*self.window_size +   [-3.5,0])
+        self.high=np.array([1000,  1000, 1000, 20000]*self.window_size+[2,2]) #TODO: change to 2.5
         
         # Previous observations * window_size (unix and Close dropped) + current profit + previous_action. Dimension: (4*20+2)x1
         self.observation_space = spaces.Box(
             low=self.low, high=self.high, 
-            shape=(self.window_size * (len(self.data.iloc[0]) - 2) + 2,), 
+            shape=(window_size * (len(data[self.df_id].iloc[0]) - 2) + 2,), 
             dtype=np.float32
         )
     
     def reset(self, seed=None):
         # after episode end, reset environment
+        if not self.test_mode:
+            self.df_id, self.episode_start = self.episode_manager.select_episode(temperature=self.episode_temp)
+            self.current_step = self.episode_start
+            self.last_step = min(self.current_step + self.episode_length, len(self.data[self.df_id]) - 2)
+            self.df_count[self.df_id]+=1
+        else:
+            self.df_id = self.episode_manager.select_dataframe(temperature=self.episode_temp)
+            self.episode_start = self.window_size
+            self.current_step = self.episode_start
+            self.last_step = len(self.data[self.df_id]) - 2
+            self.df_count[self.df_id]+=1
+        
         self.trades=[]
+        self.rewards=[]
         self.previous_action=0
-        self.episode_length=2*self.window_size if not self.test_mode else len(self.data)-self.window_size
-        self.current_step = np.random.randint(self.episode_length, len(self.data) - 2) if not self.test_mode else 0
-        self.last_step = self.current_step+self.episode_length if not self.test_mode else len(self.data)-2
         return self._next_observation(), {}
     
     def step(self, action):
         # Evaluate, if action is possible. Then get reward for episode
         self._take_action(action)
-        self.current_step += 1
         # flag for reseting environment
         done = self.current_step >= self.last_step
         # Analyze action
         reward = self._get_reward(action, done)
+        
         self.previous_action=action
+        self.current_step += 1
+
         if done:
-            info= {'trades' : self.trades, 'rewards':self.rewards}
+            self.episode_manager.update_stats(self.df_id, self.episode_start, reward)
+            info= {'trades' : self.trades, 'rewards':self.rewards, 'df_count':self.df_count}
+            self.render()
         else:
             info = {}
         return self._next_observation(), reward, done, False, info
     
     def _next_observation(self):
         # new data
-        frame = self.data.iloc[self.current_step - self.window_size + 1:self.current_step + 1]
+        frame = self.data[self.df_id].iloc[self.current_step - self.window_size:self.current_step]
         obs = frame.values[:, [1,3,4,5]].flatten()
-        current_price=frame.iloc[len(frame)-1,2]
+        current_price = self.data[self.df_id]['Close'].iloc[self.current_step]
         
         # unrealized profit calc to pass along other observations
         # if dont have opened trade
@@ -410,10 +418,10 @@ class KnifeEnv(gym.Env):
             current_profitloss=0
         # if have opened trade
         elif self.trades[-1].exit_price==None:
-            current_profitloss = calc_profit(self.trades[-1].entry_price,current_price)
+            current_profitloss = calc_profit(self.trades[-1].entry_price,current_price)-0.1
             self.trades[-1].profit=current_profitloss
         
-        # Previous observations + unrealized profit + previous action
+        # Previous observations + unrealized profit if have opened trade + previous action
         obs = np.append(obs, [current_profitloss, self.previous_action]) 
         
         # check if values of obs are within bounds
@@ -425,8 +433,8 @@ class KnifeEnv(gym.Env):
     
     def _take_action(self, action, symbol='BTCUSDT', period='15s',strategy='knife'):
         # update last trade info
-        current_price=self.data.iloc[self.current_step]['Close']
-        current_timestamp=self.data.iloc[self.current_step]['unix']
+        current_price=self.data[self.df_id]['Close'].iloc[self.current_step]
+        current_timestamp=self.data[self.df_id]['unix'].iloc[self.current_step]
         
         if action==1: # buy 
             # if first order or previous order was sold
@@ -436,54 +444,63 @@ class KnifeEnv(gym.Env):
             # if previous order only bought
             if len(self.trades)>0 and self.trades[-1].exit_price==None:
                 self.trades[-1].exit_price=current_price
-                self.trades[-1].exit_timestamp=current_timestamp        
+                self.trades[-1].exit_timestamp=current_timestamp  
         else: # do nothing
             pass
     
     def _get_reward(self, action, done):
-        current_price=self.data.iloc[self.current_step]['Close']
+        current_price=self.data[self.df_id]['Close'].iloc[self.current_step]
+        current_timestamp=self.data[self.df_id]['unix'].iloc[self.current_step]
         # if have opened trade, or trade which is closed in current price
         current_trade=self.trades[-1] if len(self.trades)>0 and (self.trades[-1].exit_price==None or self.trades[-1].exit_price==current_price) else None
         
         # if episode didnt end and have opened trade
         if not done and current_trade!=None:
             
-            # if action is do nothing and trade is opened, return unrealized profit
-            if action==0 and current_trade.exit_price==None:
-                reward=5*calc_profit(current_trade.entry_price, current_price)
+            # if action is do nothing and have opened trade   or just bought and trade is opened, return unrealized profit
+            if (action==0 and current_trade.exit_price==None) or (action==1 and current_trade.entry_timestamp==current_timestamp):
+                reward=sum(testOrder_reward(testOrder, self.data[self.df_id], current_timestamp) for testOrder in self.trades)*pow(len(self.trades),0.5)
                 
-            # if action is to buy, when trade is opened, return penalty
-            elif action==1 and current_trade.exit_price==None:
-                reward=-0.3
+            # if action is to buy and have opened trade, when trade is opened not in current timestamp, return penalty. Penalty should be harder than average loss
+            elif action==1 and current_trade.exit_price==None and current_trade.entry_timestamp!=current_timestamp:
+                reward=-50
                 
-            # if action is to sell, when trade is closed in current step, return reward
+            # if action is to sell, when trade is closed in current step, return reward.
+            # Not closing trade with little loss may hurt harder than not closing till end 
             elif action==2 and current_trade.exit_price==current_price:
-                reward=testOrder_reward(current_trade)
-                
-        # if episode didnt end and not have opened trade
-        elif not done and current_trade==None:
-            reward=0
+                reward=sum(testOrder_reward(testOrder, self.data[self.df_id], current_timestamp) for testOrder in self.trades)*pow(len(self.trades),0.5)
         
-        # Penalties for same action=(1,2) in row
-        elif self.previous_action==action and action!=0:
-            reward= -0.3
-        elif self.previous_action==action and action==0:
-            reward= 0
-        # Penalty for sell, if not have opened trade
+        # Penalties
+        # if episode didnt end and not have opened trade
+        elif not done and current_trade==None and action==0:
+            if len(self.trades)>0:
+                time_since_last_trade=(current_timestamp-self.trades[-1].exit_timestamp)/1000 
+            else:
+                start_episode_timestamp=self.data[self.df_id]['unix'].iloc[self.episode_start]
+                time_since_last_trade=(current_timestamp-start_episode_timestamp)/1000
+            # Gradually increase penalty
+            reward= (time_since_last_trade/1200)*(-50)
+        
+        # Sell, if not have opened trade
         elif current_trade==None and action==2:
-            reward=-0.3
-            
+            reward=-50
+
+        # Same action=(1,2) in row
+        elif not done and self.previous_action==action and action!=0:
+            reward= -50
+
         # If episode end, return reward for all trades
-        elif done:
-            reward=sum(testOrder_reward(testOrder) for testOrder in self.trades)
-            # penalize for no trades
+        if done:
+            # cumulative reward for all actions * amount actions
+            reward=sum(testOrder_reward(testOrder, self.data[self.df_id], current_timestamp) for testOrder in self.trades)*pow(len(self.trades),0.5)
+            # penalty for no trades = bad episode
             if reward==0:
-                reward=-1
+                reward=-20
         
         self.rewards.append(reward)
         return reward
     
     def render(self):
         # Print current info
-        print(self._get_reward())
-        
+        print(self.df_id, 'df% ', self.df_count[self.df_id]/sum(self.df_count),' #trades ',len(self.trades),' episode reward ',self._get_reward(self.previous_action,True))
+        pass
