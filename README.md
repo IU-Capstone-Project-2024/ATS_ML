@@ -71,7 +71,7 @@ After training:
 
 ## Project timeline and progress reports:
 
-[Innopolis University Summer course 2024 Capstone project](https://capstone.innopolis.university/docs/2024/ats)
+[Innopolis University Summer course 2024 ATS capstone project](https://capstone.innopolis.university/docs/2024/ats/week1)
 
 
 
