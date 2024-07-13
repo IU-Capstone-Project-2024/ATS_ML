@@ -52,6 +52,31 @@ pip install -r requirements.txt
 
   Create a virtual environment for the project and activate it. This will help isolate the project dependencies and ensure a clean installation.
 
+4. Modify the configs/main.json:
+   - FinalPPO_20_80_trained.zip
+   ```json
+   {
+    "model_path": "models/FinalPPO_20_80_trained.zip",
+    "observation_window": 20,
+    "observed_features": ["agg_Close_diff","agg_Volume_diff","agg_Taker volume delta","agg_amount trades"],
+    "prediction_frequency": 15,
+    "receiver_endpoint": "",
+    "strategy": "No strategy"
+   }
+   ```
+   - PPO_knife_cumul_80_80.zip
+   ```json
+   {
+    "model_path": "models/PPO_knife_cumul_80_80.zip",
+    "observation_window": 80,
+    "observed_features": ["agg_Close_diff","agg_Volume_diff","agg_Taker volume delta","agg_amount trades"],
+    "prediction_frequency": 15,
+    "receiver_endpoint": "",
+    "strategy": "Knife"
+   }
+   ```
+   - Modify the "receiver_endpoint" to make the model send decisions to a trading bot
+     
 ## Performance
 
 **What we have tested and what results we have achieved:**
