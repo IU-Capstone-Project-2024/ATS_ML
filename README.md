@@ -69,7 +69,7 @@ After training:
 
 ![statistics](https://capstone.innopolis.university/2024/ATS/ml2.jpeg)
 
-## Project timeline and progress reports:
+## Project website and progress reports:
 
 [Innopolis University Summer course 2024 ATS capstone project](https://capstone.innopolis.university/docs/2024/ats/week1)
 
