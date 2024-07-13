@@ -69,32 +69,11 @@ After training:
 
 ![statistics](https://capstone.innopolis.university/2024/ATS/ml2.jpeg)
 
-## Progress report
+## Project timeline and progress reports:
 
-### Done:
+[Innopolis University Summer course 2024 Capstone project](https://capstone.innopolis.university/docs/2024/ats)
 
-- Defined the repository structure
-- Configured the primary version control interface for the data
-- Implemented data collector programs for training and real-time use
-- Implemented initial preprocessing of the data
-- Defined metrics for model evaluation (profit, number of transactions, winrate).
-- Assembled environments to train the agent
-- Tested a simple model without data preprocessing
-- Implemented data preprocessing
 
-### To-Do:
-
-- Add cloud storage of training data (for version control)
-- Customise data transformation pipelines (to make it easier for the model to identify patterns + improve interpretability).
-- Implement reinforcement learning model prototype/Proof of Concept (most likely to be Proximal Policy Optimisation)
-
-- Train and compare two agents based on two ideas:
-
-  - The agent is switched on when the price changes sharply (the moment is determined when the threshold is crossed) and is trained only on such moments.
-  - The agent is trained on all available data, including the one described above.
-- Make visualisation as part of agent comparison
-- Cloud storage of training data
-- On the basis of the comparison choose a future development strategy for ml module
 
 ## Issues and Support
 
