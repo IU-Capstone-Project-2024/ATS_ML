@@ -16,7 +16,7 @@ Welcome to the Automatic Trade System (ATS) project! This repository is dedicate
 
 The ATS project aims to develop an automated trading system that leverages machine learning algorithms to predict market trends and make informed trading decisions. The project consists of a frontend web interface and a backend machine learning component.
 
-This repository houses an autonomous MLops system centered on the Long Short-Term Memory network (LSTM) model, which predicts the future price of the selected cryptocurrency for the next 15 seconds time interval based on incoming real-time information. Afterward, the predicted information is transferred to the automated trading system through the API interface, where the trading decision-making process is executed based on the received data.
+This repository houses an autonomous ML system centered on the Proximal Policy Optimization (PPO) model, which makes the trading decision for the next 15 seconds time interval based on incoming real-time information. Afterward, the predicted information is transferred to the automated trading system through the API interface, where the trading decision-making process is executed based on the received data.
 
 ## Stack
 
