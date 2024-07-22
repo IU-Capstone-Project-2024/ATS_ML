@@ -16,7 +16,7 @@ Welcome to the Automatic Trade System (ATS) project! This repository is dedicate
 
 The ATS project aims to develop an automated trading system that leverages machine learning algorithms to predict market trends and make informed trading decisions. The project consists of a frontend web interface and a backend machine learning component.
 
-This repository houses an autonomous MLops system centered on the Long Short-Term Memory network (LSTM) model, which predicts the future price of the selected cryptocurrency for the next 15 seconds time interval based on incoming real-time information. Afterward, the predicted information is transferred to the automated trading system through the API interface, where the trading decision-making process is executed based on the received data.
+This repository houses an autonomous ML system centered on the Proximal Policy Optimization (PPO) model, which makes the trading decision for the next 15 seconds time interval based on incoming real-time information. Afterward, the predicted information is transferred to the automated trading system through the API interface, where the trading decision-making process is executed based on the received data.
 
 ## Stack
 
@@ -52,6 +52,31 @@ pip install -r requirements.txt
 
   Create a virtual environment for the project and activate it. This will help isolate the project dependencies and ensure a clean installation.
 
+4. Modify the configs/main.json:
+   - FinalPPO_20_80_trained.zip
+   ```json
+   {
+    "model_path": "models/FinalPPO_20_80_trained.zip",
+    "observation_window": 20,
+    "observed_features": ["agg_Close_diff","agg_Volume_diff","agg_Taker volume delta","agg_amount trades"],
+    "prediction_frequency": 15,
+    "receiver_endpoint": "",
+    "strategy": "No strategy"
+   }
+   ```
+   - PPO_knife_cumul_80_80.zip
+   ```json
+   {
+    "model_path": "models/PPO_knife_cumul_80_80.zip",
+    "observation_window": 80,
+    "observed_features": ["agg_Close_diff","agg_Volume_diff","agg_Taker volume delta","agg_amount trades"],
+    "prediction_frequency": 15,
+    "receiver_endpoint": "",
+    "strategy": "Knife"
+   }
+   ```
+   - Modify the "receiver_endpoint" to make the model send decisions to a trading bot
+     
 ## Performance
 
 **What we have tested and what results we have achieved:**
